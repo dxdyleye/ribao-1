@@ -59,11 +59,11 @@ def grade_adi(x):
     return '高风险'
 
 
-# ---------- 颜色（风险水平背景色，参照金标准样式表中的 Excel 标准色） ----------
-FILL_SAFE = 'C6EFCE'   # 安全-绿
-FILL_LOW = 'FFEB9C'    # 低风险-黄
+# ---------- 颜色（风险水平背景色，参照一览表示例表格底纹） ----------
+FILL_SAFE = '92D050'   # 安全-绿
+FILL_LOW = 'FFFF00'    # 低风险-黄
 FILL_MID = 'FFC000'    # 中风险-橘黄
-FILL_HIGH = 'FFC7CE'   # 高风险-红（Excel 标准“差”样式色）
+FILL_HIGH = 'FF0000'   # 高风险-红
 RISK_FILLS = {'安全': FILL_SAFE, '低风险': FILL_LOW, '中风险': FILL_MID, '高风险': FILL_HIGH}
 FILL_YELLOW = 'FFFF00'  # 标记黄（SSI来源 / 被修改行）
 FILL_RED = 'FF0000'     # 标记红（被删除行）

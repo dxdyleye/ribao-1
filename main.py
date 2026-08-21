@@ -31,16 +31,24 @@ class App(object):
         frm = ttk.Frame(root, padding=10)
         frm.pack(fill='both', expand=True)
 
-        # 输入文件
-        ttk.Label(frm, text='输入Excel文件：').grid(row=0, column=0, sticky='w', **pad)
+        # 总库表文件
+        ttk.Label(frm, text='输入总库表文件：').grid(row=0, column=0, sticky='w', **pad)
         self.entry_file = ttk.Entry(frm, width=62)
         self.entry_file.grid(row=0, column=1, sticky='we', **pad)
         ttk.Button(frm, text='浏览…', command=self.choose_file).grid(row=0, column=2, **pad)
 
+        # 广州市表文件（可选，用于补全缺失的地市-区/县/市-街道/乡/镇）
+        ttk.Label(frm, text='广州市表文件（可选）：').grid(row=1, column=0, sticky='w', **pad)
+        self.entry_gz = ttk.Entry(frm, width=62)
+        self.entry_gz.grid(row=1, column=1, sticky='we', **pad)
+        ttk.Button(frm, text='浏览…', command=self.choose_gz).grid(row=1, column=2, **pad)
+        ttk.Label(frm, text='总库中广州市缺失“地市-区/县/市-街道/乡/镇”时，与广州表其余重合列完全一致方可补充',
+                  foreground='gray').grid(row=2, column=1, sticky='w', padx=8)
+
         # 目标日期
-        ttk.Label(frm, text='目标日期：').grid(row=1, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='目标日期：').grid(row=3, column=0, sticky='w', **pad)
         d = tk.Frame(frm)
-        d.grid(row=1, column=1, sticky='w', **pad)
+        d.grid(row=3, column=1, sticky='w', **pad)
         now = date.today()
         self.var_year = tk.StringVar(value=str(now.year))
         self.var_month = tk.StringVar(value=str(now.month))
@@ -53,27 +61,27 @@ class App(object):
         ttk.Label(d, text='日').pack(side='left')
 
         # 排除字段
-        ttk.Label(frm, text='排除字段（可选）：').grid(row=2, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='排除字段（可选）：').grid(row=4, column=0, sticky='w', **pad)
         self.entry_excl = ttk.Entry(frm, width=62)
-        self.entry_excl.grid(row=2, column=1, sticky='we', **pad)
+        self.entry_excl.grid(row=4, column=1, sticky='we', **pad)
         ttk.Label(frm, text='如：荔湾区（删除地市-区/县/市-街道/乡/镇中包含该字段的记录）',
-                  foreground='gray').grid(row=3, column=1, sticky='w', padx=8)
+                  foreground='gray').grid(row=5, column=1, sticky='w', padx=8)
 
         # 输出目录
-        ttk.Label(frm, text='输出目录：').grid(row=4, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='输出目录：').grid(row=6, column=0, sticky='w', **pad)
         self.entry_out = ttk.Entry(frm, width=62)
-        self.entry_out.grid(row=4, column=1, sticky='we', **pad)
-        ttk.Button(frm, text='选择…', command=self.choose_dir).grid(row=4, column=2, **pad)
+        self.entry_out.grid(row=6, column=1, sticky='we', **pad)
+        ttk.Button(frm, text='选择…', command=self.choose_dir).grid(row=6, column=2, **pad)
 
         # 开始按钮
         self.btn = ttk.Button(frm, text='开始处理', command=self.on_start)
-        self.btn.grid(row=5, column=1, sticky='w', **pad)
+        self.btn.grid(row=7, column=1, sticky='w', **pad)
 
         # 日志区
-        ttk.Label(frm, text='处理日志：').grid(row=6, column=0, sticky='nw', **pad)
+        ttk.Label(frm, text='处理日志：').grid(row=8, column=0, sticky='nw', **pad)
         self.txt = tk.Text(frm, height=18, state='disabled', font=('Consolas', 9))
-        self.txt.grid(row=7, column=0, columnspan=3, sticky='nsew', **pad)
-        frm.rowconfigure(7, weight=1)
+        self.txt.grid(row=9, column=0, columnspan=3, sticky='nsew', **pad)
+        frm.rowconfigure(9, weight=1)
         frm.columnconfigure(1, weight=1)
 
         self.root.after(100, self._poll)
@@ -96,6 +104,14 @@ class App(object):
             if not self.entry_out.get().strip():
                 self.entry_out.delete(0, 'end')
                 self.entry_out.insert(0, os.path.dirname(p))
+
+    def choose_gz(self):
+        p = filedialog.askopenfilename(
+            title='选择广州市表文件',
+            filetypes=[('Excel 文件', '*.xlsx *.xls'), ('所有文件', '*.*')])
+        if p:
+            self.entry_gz.delete(0, 'end')
+            self.entry_gz.insert(0, p)
 
     def choose_dir(self):
         p = filedialog.askdirectory(title='选择输出目录')
@@ -167,17 +183,19 @@ class App(object):
             messagebox.showerror('日期错误', '日期不合法：%s' % e)
             return
         ex = self.entry_excl.get().strip() or None
+        gz = self.entry_gz.get().strip() or None
 
         self.running = True
         self.btn.configure(state='disabled')
         self.log('开始处理…')
-        threading.Thread(target=self.worker, args=(f, out, target, ex), daemon=True).start()
+        threading.Thread(target=self.worker, args=(f, out, target, ex, gz), daemon=True).start()
 
-    def worker(self, f, out, target, ex):
+    def worker(self, f, out, target, ex, gz):
         def log(msg):
             self.q.put(('log', msg))
         try:
-            paths = process_file(f, out, target.year, target.month, target.day, ex, log=log)
+            paths = process_file(f, out, target.year, target.month, target.day, ex,
+                                 gz_path=gz, log=log)
             self.q.put(('done', paths))
         except ProcessingError as e:
             self.q.put(('error', '处理中止：%s' % e))

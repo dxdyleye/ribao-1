@@ -7,17 +7,28 @@ import pandas as pd
 
 from . import config as C
 from . import excel_output, word_output
-from .pipeline import run_pipeline
+from .pipeline import run_pipeline, supplement_missing_loc
 
 
-def process_file(input_path, output_dir, year, month, day, exclude=None, log=None):
-    """返回生成的 4 个文件完整路径列表"""
+def process_file(input_path, output_dir, year, month, day, exclude=None,
+                 gz_path=None, log=None):
+    """返回生成的 3 个文件完整路径列表。
+
+    gz_path：广州市表文件（可选）——总库中广州市缺失“地市-区/县/市-街道/乡/镇”的行，
+    与广州表其余重合列完全一致时按广州表补充，以补充后的总库为基础文件。
+    """
     def logmsg(s):
         if log:
             log(s)
 
-    logmsg('正在读取Excel文件…')
+    logmsg('正在读取总库表文件…')
     source = pd.read_excel(input_path)
+    if gz_path:
+        logmsg('正在读取广州市表文件…')
+        gz = pd.read_excel(gz_path)
+        source, n_target, n_filled = supplement_missing_loc(source, gz)
+        logmsg('广州市缺失地市-区/县/市-街道/乡/镇 %d 行，成功按广州表补充 %d 行'
+               % (n_target, n_filled))
     target = date(year, month, day)
 
     logmsg('正在预处理数据（日期筛选/空值/排除字段/距末例天数/防控区类型）…')

@@ -34,6 +34,45 @@ def validate_columns(df):
         raise ProcessingError('源文件缺少必需列：' + '、'.join(missing))
 
 
+def supplement_missing_loc(zongku_df, guangzhou_df):
+    """广州表补全（D41）：总库中 地市=广州市 且 地市-区/县/市-街道/乡/镇 缺失的行，
+    若与广州表在**其余全部重合列**上完全一致（唯一匹配），则用广州表的该列值补充。
+    返回 (补充后的总库, 目标行数, 成功补充数)。"""
+    df = zongku_df.copy()
+    if guangzhou_df is None or len(guangzhou_df) == 0 or C.COL_LOC not in guangzhou_df.columns:
+        return df, 0, 0
+    gz = guangzhou_df.copy()
+    loc_col = C.COL_LOC
+    shared = [c for c in df.columns if c in gz.columns and c != loc_col]
+    if not shared:
+        return df, 0, 0
+
+    def norm(v):
+        if v is None or (isinstance(v, float) and v != v) or (isinstance(v, str) and not v.strip()):
+            return ''
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return ('n', round(float(v), 10))
+        return ('s', str(v).strip())
+
+    # 广州表建键（该列本身缺失的行无法提供补充，跳过）
+    key_map = {}
+    gz_ok = gz[gz[loc_col].notna()]
+    for _, r in gz_ok.iterrows():
+        key_map.setdefault(tuple(norm(r[c]) for c in shared), []).append(r)
+
+    is_gz = df['地市'].astype(str).str.strip() == '广州市'
+    loc_missing = df[loc_col].isna() | (df[loc_col].astype(str).str.strip() == '')
+    target = list(df.index[is_gz & loc_missing])
+    filled = 0
+    for i in target:
+        cands = key_map.get(tuple(norm(df.at[i, c]) for c in shared), [])
+        locs = {cand[loc_col] for cand in cands if not pd.isna(cand[loc_col])}
+        if len(locs) == 1:          # 唯一（或候选多条但 loc 相同）
+            df.at[i, loc_col] = locs.pop()
+            filled += 1
+    return df, len(target), filled
+
+
 def _make_keys(frame):
     """键值 K = (地市-区/县/市-街道/乡/镇, 社区/村居, 地址1, 地址2, 防控区类型)；空值视为空字符串"""
     cols = [C.COL_LOC, C.COL_COMMUNITY, C.COL_ADDR1, C.COL_ADDR2, C.COL_TYPE]
