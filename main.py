@@ -127,7 +127,8 @@ class App(object):
                     self.log(payload)
                 elif kind == 'done':
                     self.log('处理完成。')
-                    messagebox.showinfo('完成', '已生成 3 份文件：\n\n' + '\n'.join(payload))
+                    messagebox.showinfo('完成', '已生成 %d 份文件：\n\n%s'
+                                        % (len(payload), '\n'.join(payload)))
                     if payload:
                         self._open_folder(os.path.dirname(payload[0]))
                     self.running = False

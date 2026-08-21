@@ -161,6 +161,15 @@ def write_calc_workbook(path, calc_sheets):
     _apply_east_asia_font(path)
 
 
+def write_zongku_processing(path, sheet1, sheet2, sheet3, sheet4):
+    """总库表处理 Excel：总库-广州市-提取 / 广州市表-提取 / 广州市-整合 / 整合后的总库"""
+    with pd_writer(path) as writer:
+        sheet1.to_excel(writer, sheet_name='总库-广州市-提取', index=False)
+        sheet2.to_excel(writer, sheet_name='广州市表-提取', index=False)
+        sheet3.to_excel(writer, sheet_name='广州市-整合', index=False)
+        sheet4.to_excel(writer, sheet_name='整合后的总库', index=False)
+
+
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 / Sheet4 删除数据情况说明
 
