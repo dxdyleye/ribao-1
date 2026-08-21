@@ -59,14 +59,20 @@ def grade_adi(x):
     return '高风险'
 
 
-# ---------- 颜色 ----------
-FILL_SAFE = 'C6EFCE'   # 绿
-FILL_LOW = 'FFEB9C'    # 黄
-FILL_MID = 'FFC000'    # 橘黄
-FILL_HIGH = 'FF9999'   # 红
+# ---------- 颜色（风险水平背景色，参照金标准样式表中的 Excel 标准色） ----------
+FILL_SAFE = 'C6EFCE'   # 安全-绿
+FILL_LOW = 'FFEB9C'    # 低风险-黄
+FILL_MID = 'FFC000'    # 中风险-橘黄
+FILL_HIGH = 'FFC7CE'   # 高风险-红（Excel 标准“差”样式色）
 RISK_FILLS = {'安全': FILL_SAFE, '低风险': FILL_LOW, '中风险': FILL_MID, '高风险': FILL_HIGH}
 FILL_YELLOW = 'FFFF00'  # 标记黄（SSI来源 / 被修改行）
 FILL_RED = 'FF0000'     # 标记红（被删除行）
+
+# ---------- 字体（所有输出文件：中文 仿宋_GB2312，英文 Times New Roman） ----------
+FONT_CN = '仿宋_GB2312'
+FONT_EN = 'Times New Roman'
+SIZE_WUHAO = 10.5       # 五号（整合表）
+SIZE_14 = 14            # 其他 sheet 字号（村居一览表）
 
 # ---------- 输出文件命名（月日不补零，全角冒号；计算过程表两位补零） ----------
 def daily_docx_name(year, month, day):
@@ -74,11 +80,7 @@ def daily_docx_name(year, month, day):
 
 
 def summary_xlsx_name(year, month, day):
-    return '全省媒介伊蚊传染病疫点重点镇（街道）蚊媒密度监测村居一览表（%d月%d日20：00）.xlsx' % (month, day)
-
-
-def summary_docx_name(year, month, day):
-    return '全省媒介伊蚊传染病疫点重点镇（街道）蚊媒密度监测村居一览表（%d月%d日20：00）.docx' % (month, day)
+    return '村居一览表（%d月%d日20：00）.xlsx' % (month, day)
 
 
 def calc_xlsx_name(year, month, day):

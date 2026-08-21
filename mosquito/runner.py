@@ -42,17 +42,10 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, log=Non
     word_output.write_daily_report(p, target, bi_sec, adi_sec)
     paths.append(p)
 
-    # 3 监测点汇总 Excel
-    logmsg('正在生成监测点汇总Excel…')
+    # 3 监测点汇总 Excel（村居一览表）
+    logmsg('正在生成村居一览表Excel…')
     p = os.path.join(output_dir, C.summary_xlsx_name(year, month, day))
     excel_output.write_monitoring_workbook(p, res.bi_final, res.adi_final, res.deletions)
-    paths.append(p)
-
-    # 4 一览表 Word（BI+ADI 整合表）
-    logmsg('正在生成一览表Word（BI+ADI整合表）…')
-    merged = word_output.build_merged_table(res.bi_final, res.adi_final)
-    p = os.path.join(output_dir, C.summary_docx_name(year, month, day))
-    word_output.write_summary_word(p, target, merged)
     paths.append(p)
 
     logmsg('全部完成。')

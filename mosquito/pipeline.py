@@ -222,11 +222,10 @@ def run_pipeline(source_df, target_date, exclude=None):
     bi_final, bi_sheets = _bi_ssi_pipeline(bi_ssi, del_rows)
     adi_final, adi_sheets = _adi_pipeline(adi_raw, del_rows)
 
-    # ---- 删除数据情况说明（3.9 修订版：列名同计算过程表、仅输入日期数据、按监测方法排序） ----
+    # ---- 删除数据情况说明（3.9 修订：列同计算过程表、仅输入日期数据、按删除原因排序、含监测日期） ----
     del_cols = ['地市', '区县', '街道', C.COL_LOC, C.COL_COMMUNITY,
                 C.COL_ADDR1, C.COL_ADDR2, C.COL_TYPE, '监测地点',
                 C.COL_METHOD, C.COL_VALUE]
-    method_order = {C.METHOD_BI: 0, C.METHOD_SSI: 1, C.METHOD_ADI: 2}
 
     def _is_na(v):
         return v is None or (isinstance(v, float) and v != v)
@@ -255,13 +254,12 @@ def run_pipeline(source_df, target_date, exclude=None):
             '监测地点': mp,
             C.COL_METHOD: r.get(C.COL_METHOD),
             C.COL_VALUE: r.get(C.COL_VALUE),
+            '监测日期': target_date,
             '删除原因': reason,
         })
-    deletions = pd.DataFrame(rows, columns=del_cols + ['删除原因']) if rows else \
-        pd.DataFrame(columns=del_cols + ['删除原因'])
-    deletions['_mo'] = deletions[C.COL_METHOD].map(lambda m: method_order.get(m, 3))
-    deletions = deletions.sort_values(['_mo', C.COL_METHOD], kind='stable') \
-        .drop(columns=['_mo']).reset_index(drop=True)
+    deletions = pd.DataFrame(rows, columns=del_cols + ['监测日期', '删除原因']) if rows else \
+        pd.DataFrame(columns=del_cols + ['监测日期', '删除原因'])
+    deletions = deletions.sort_values('删除原因', kind='stable').reset_index(drop=True)
 
     res = PipelineResult()
     res.base = base
@@ -362,7 +360,7 @@ def _bi_ssi_pipeline(bi_ssi, del_rows):
     res = {}
     res['SSI表'] = (sheet1, None)
     res['BI+SSI(不重复)'] = (sheet2, '_yellow')
-    res['BI+SSI(重复)+取较大值处理'] = (sheet3, '_deleted')
+    res['BI+SSI(重复)+取较大值处理'] = (sheet3, None)   # 背景无色（D40）
     res['重复数据删除(BI)'] = (sheet4, '_deleted')
     res['地址区分处理(BI)'] = (sheet5, '_modified')
     res['最终表(BI)'] = (bi_final[['地市', '区县', '街道', '监测地点', 'BI*', '风险水平*']], None)
