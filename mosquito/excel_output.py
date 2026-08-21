@@ -1,18 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Excel 输出：计算过程 Excel（9 个 Sheet）与 监测点汇总 Excel（3 个 Sheet）。
+"""Excel 输出：计算过程 Excel（9 个 Sheet）与 村居一览表 Excel（4 个 Sheet）。
 
 使用 openpyxl 写入单元格填充色（黄/红标记、风险等级背景色）。
 
 监测点汇总 BI表/ADI表（3.7 节）：
-- 仅“风险水平*”一列按数值着色，其余列不着色；
+- 仅“风险水平*”列按数值着色，其余列不着色；
 - “地市”列纵向合并连续相同的单元格；
-- 所有单元格水平 + 垂直居中。
+- 所有单元格水平 + 垂直居中；
+- 字体：含中文的单元格用 仿宋_GB2312，纯英文/数字单元格用 Times New Roman
+  （xlsx 单格仅支持一个字体名，无法像 Word 那样按脚本分别设置）。
 """
-import os
-import re
-import shutil
-import zipfile
-
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -25,31 +22,18 @@ _NUM_COLS = ('监测指标值', 'BI*', 'ADI', '原BI值', '原SSI值', '转换�
 _CENTER = Alignment(horizontal='center', vertical='center')
 
 
-def _cell_font(size=None):
-    """中文字体 仿宋_GB2312，英文字体 Times New Roman（字号可选）。
-    eastAsia 在 _apply_east_asia_font 中写入 styles.xml。"""
-    f = Font(name=C.FONT_EN)
+def _has_cjk(text):
+    if text is None:
+        return False
+    return any('\u4e00' <= ch <= '\u9fff' for ch in str(text))
+
+
+def _cell_font(size, text):
+    """含中文 -> 仿宋_GB2312；纯英文/数字 -> Times New Roman（xlsx 每格单一字体名）"""
+    f = Font(name=C.FONT_CN if _has_cjk(text) else C.FONT_EN)
     if size:
         f.size = size
     return f
-
-
-def _apply_east_asia_font(path):
-    """openpyxl 无法直接写 eastAsia 字体，保存后改写 styles.xml：
-    将所有 Times New Roman 字体的 <name> 替换为带 eastAsia="仿宋_GB2312" 的 <rFonts>。"""
-    tmp = path + '.tmp'
-    with zipfile.ZipFile(path, 'r') as zin, \
-            zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == 'xl/styles.xml':
-                text = data.decode('utf-8')
-                text = text.replace(
-                    '<name val="Times New Roman"/>',
-                    '<rFonts ascii="Times New Roman" hAnsi="Times New Roman" eastAsia="%s"/>' % C.FONT_CN)
-                data = text.encode('utf-8')
-            zout.writestr(item, data)
-    shutil.move(tmp, path)
 
 
 def _strip_internal(df):
@@ -110,12 +94,11 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None,
                     if isinstance(cell.value, (int, float)):
                         cell.number_format = '0.0'
 
-    # 字体（中文 仿宋_GB2312 / 英文 Times New Roman）+ 居中
-    font = _cell_font(font_size)
+    # 字体（含中文 仿宋_GB2312 / 纯英文数字 Times New Roman）+ 居中
     for r in range(1, ws.max_row + 1):
         for c in range(1, ncols + 1):
             cell = ws.cell(row=r, column=c)
-            cell.font = font
+            cell.font = _cell_font(font_size, cell.value)
             if center:
                 cell.alignment = _CENTER
 
@@ -159,7 +142,6 @@ def write_calc_workbook(path, calc_sheets):
     with pd_writer(path) as writer:
         for name, (df, flag) in calc_sheets.items():
             _write_sheet(writer, name, df, flag_col=flag)
-    _apply_east_asia_font(path)
 
 
 
@@ -181,7 +163,6 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
                      merge_cols=['地市'], center=True, font_size=C.SIZE_WUHAO,
                      header_rename={'ADI风险': '风险水平*', 'BI风险': '风险水平*'})
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
-    _apply_east_asia_font(path)
 
 
 def _build_integrated_frame(bi, adi):
