@@ -18,6 +18,7 @@ from openpyxl.utils import get_column_letter
 
 from . import config as C
 from .parser import district_display_sheet
+from .pipeline import round1
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI', '原BI值', '原SSI值', '转换后的SSI值')
@@ -199,10 +200,11 @@ def _build_integrated_frame(bi, adi):
 
 
 def _display_frame(final, value_col):
-    """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->/），按 3.7 排序：
-    地市固定顺序 → 区县升序 → 街道升序 → 监测地点升序"""
+    """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
+    按 3.7 排序：地市固定顺序 → 区县升序 → 街道升序 → 监测地点升序"""
     df = final.copy()
     df['区县'] = df['区县'].map(district_display_sheet)
+    df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
     df = df.sort_values(
         ['_city_idx', '区县', '街道', '监测地点'],
         kind='stable',

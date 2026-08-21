@@ -85,9 +85,9 @@ def build_section(final_df, exclude_field, excluded_cities, metric):
         city_list = '、'.join(names[:-1]) + '和' + last_name
 
     total = len(df)
-    district_num = df.groupby(['地市', '区县']).ngroups
+    district_num = df['区县'].nunique()                       # 区县名去重（市辖区合并，与参考一致）
     street_num = df.groupby(['地市', '街道']).ngroups
-    point_num = df['监测地点'].nunique()
+    point_num = df.groupby(['街道', '监测地点']).ngroups      # 监测点=（街道+监测地点）去重
     if metric == 'BI':
         ok_num = int((df[value_col] < 5).sum())
         risk_num = int((df[value_col] >= 5).sum())
@@ -100,7 +100,8 @@ def build_section(final_df, exclude_field, excluded_cities, metric):
     # 风险列表（高→中→低，组内按值降序；数量为 0 不输出）
     def element(row):
         dist = row['区县'] if row['区县'] != '市辖区' else ''
-        return '%s市%s%s%s（%.1f）' % (row['地市'], dist, row['街道'], row['监测地点'], row[value_col])
+        return '%s市%s%s%s（%.1f）' % (row['地市'], dist, row['街道'], row['监测地点'],
+                                     round1(row[value_col]))   # 四舍五入显示
 
     if metric == 'BI':
         high = df[df[value_col] >= 20]
