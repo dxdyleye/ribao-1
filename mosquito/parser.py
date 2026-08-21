@@ -54,14 +54,7 @@ def parse_location(s):
 
 
 def district_display_sheet(district):
-    """监测点汇总 Excel 显示：市辖区->/，去掉末尾 市/县/区 字"""
-    if district == '市辖区':
-        return '/'
-    return district.rstrip('市县区')
-
-
-def district_display_word(district):
-    """一览表 Word 显示：市辖区->-（示例如此），去掉末尾 市/县/区 字"""
+    """村居一览表显示：市辖区->-（东莞/中山，与参考一致），去掉末尾 市/县/区 字"""
     if district == '市辖区':
         return '-'
     return district.rstrip('市县区')
