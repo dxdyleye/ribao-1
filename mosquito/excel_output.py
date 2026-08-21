@@ -28,6 +28,18 @@ def _has_cjk(text):
     return any('\u4e00' <= ch <= '\u9fff' for ch in str(text))
 
 
+def _pinyin_key(s):
+    """中文按拼音（字母）升序的排序键：GB2312 一级汉字按拼音排序，
+    因此 GBK 字节序近似拼音序（无第三方依赖）。无法编码的字符退回 Unicode 码点。"""
+    if s is None:
+        return ''
+    s = str(s)
+    try:
+        return s.encode('gbk').hex()
+    except UnicodeEncodeError:
+        return s
+
+
 def _cell_font(size, text):
     """含中文 -> 仿宋_GB2312；纯英文/数字 -> Times New Roman（xlsx 每格单一字体名）"""
     f = Font(name=C.FONT_CN if _has_cjk(text) else C.FONT_EN)
@@ -176,20 +188,25 @@ def _build_integrated_frame(bi, adi):
             m[col] = '/'
         m[col] = m[col].where(m[col].notna(), '/')
     m['_city_idx'] = m['地市'].map(C.CITY_INDEX).fillna(99).astype(int)
-    m = m.sort_values(['_city_idx', '区县', '街道', '监测地点'], kind='stable').reset_index(drop=True)
+    m['_k1'] = m['区县'].map(_pinyin_key)
+    m['_k2'] = m['街道'].map(_pinyin_key)
+    m['_k3'] = m['监测地点'].map(_pinyin_key)
+    m = m.sort_values(['_city_idx', '_k1', '_k2', '_k3'], kind='stable') \
+        .drop(columns=['_k1', '_k2', '_k3']).reset_index(drop=True)
     return m[['地市', '区县', '街道', '监测地点', 'ADI', 'ADI风险', 'BI*', 'BI风险']]
 
 
 def _display_frame(final, value_col):
     """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
-    按 3.7 排序：地市固定顺序 → 区县升序 → 街道升序 → 监测地点升序"""
+    排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 监测地点升序（拼音）"""
     df = final.copy()
     df['区县'] = df['区县'].map(district_display_sheet)
     df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
-    df = df.sort_values(
-        ['_city_idx', '区县', '街道', '监测地点'],
-        kind='stable',
-    ).reset_index(drop=True)
+    df['_k1'] = df['区县'].map(_pinyin_key)
+    df['_k2'] = df['街道'].map(_pinyin_key)
+    df['_k3'] = df['监测地点'].map(_pinyin_key)
+    df = df.sort_values(['_city_idx', '_k1', '_k2', '_k3'], kind='stable') \
+        .drop(columns=['_k1', '_k2', '_k3']).reset_index(drop=True)
     return df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*']]
 
 
