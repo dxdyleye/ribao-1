@@ -1,11 +1,5 @@
-# 核心依赖（Python 3.9，兼容 Win7）
-pandas==2.1.4
-numpy==1.26.4
-openpyxl==3.1.2
-python-docx==1.1.0
-
-# .xls 兼容（可选）
-xlrd==2.0.1
-
-# 打包（仅构建时使用）
-pyinstaller==6.3.0
+# Python 3.8（Win7 兼容）锁定版本；由 GitHub Actions 安装并打包
+pandas==2.0.3
+openpyxl==3.1.5
+python-docx==1.1.2
+pyinstaller==6.11.1
