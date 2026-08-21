@@ -34,44 +34,6 @@ def validate_columns(df):
         raise ProcessingError('源文件缺少必需列：' + '、'.join(missing))
 
 
-def build_zongku_processing(zongku_df, guangzhou_df):
-    """总库表处理（D43）：构建 4 个 Sheet，纯按行号粘贴广州表 loc。
-
-    Sheet1 总库-广州市-提取：总库中 地市=广州市 的行，仅按 社区/村居 升序；
-    Sheet2 广州市表-提取：广州表中 地市=广州市 的行，仅按 社区/村居 升序；
-    Sheet3 广州市-整合：将 Sheet2 的“地市-区/县/市-街道/乡/镇”列按对应行号粘贴至 Sheet1 相应列；
-    Sheet4 整合后的总库：广州市-整合 + 总库其余地市数据（保持原顺序）。
-    返回 (sheet1, sheet2, sheet3, sheet4, 成功补充数)。
-    """
-    z = zongku_df.copy()
-    g = guangzhou_df.copy()
-    loc_col = C.COL_LOC
-    comm_col = C.COL_COMMUNITY
-
-    is_gz = z['地市'].astype(str).str.strip() == '广州市'
-    z_gz = z[is_gz].sort_values(comm_col, kind='stable').reset_index(drop=True)
-    z_other = z[~is_gz].reset_index(drop=True)
-
-    if '地市' in g.columns:
-        g_gz = g[g['地市'].astype(str).str.strip() == '广州市']
-    else:
-        g_gz = g
-    g_gz = g_gz.sort_values(comm_col, kind='stable').reset_index(drop=True)
-
-    # Sheet3：按对应行号粘贴 Sheet2 的 loc 列到 Sheet1 相应列
-    s3 = z_gz.copy()
-    if loc_col in g_gz.columns:
-        vals = list(g_gz[loc_col].values)
-        n = min(len(vals), len(s3))
-        s3.loc[:n - 1, loc_col] = vals[:n]
-    n_filled = int(s3[loc_col].notna().sum()) - int(z_gz[loc_col].notna().sum())
-
-    # Sheet4：广州市-整合 + 总库其余地市（原顺序）
-    s4 = pd.concat([s3, z_other], ignore_index=True)
-
-    return z_gz, g_gz, s3, s4, n_filled
-
-
 def _make_keys(frame):
     """键值 K = (地市-区/县/市-街道/乡/镇, 社区/村居, 地址1, 地址2, 防控区类型)；空值视为空字符串"""
     cols = [C.COL_LOC, C.COL_COMMUNITY, C.COL_ADDR1, C.COL_ADDR2, C.COL_TYPE]

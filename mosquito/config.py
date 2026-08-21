@@ -83,9 +83,5 @@ def summary_xlsx_name(year, month, day):
     return '村居一览表（%d月%d日20：00）.xlsx' % (month, day)
 
 
-def zongku_process_name(year, month, day):
-    return '总库表处理_%02d月%02d日.xlsx' % (month, day)
-
-
 def calc_xlsx_name(year, month, day):
     return 'BI_ADI_计算过程_%02d月%02d日.xlsx' % (month, day)
