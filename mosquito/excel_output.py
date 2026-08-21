@@ -43,20 +43,28 @@ def _merge_same_values(ws, col_idx):
                        end_row=max_row, end_column=col_idx)
 
 
-def _write_sheet(writer, name, df, flag_col=None, risk_col=None,
-                 merge_cols=None, center=False):
+def _write_sheet(writer, name, df, flag_col=None, risk_cols=None,
+                 merge_cols=None, center=False, header_rename=None):
     """写入一个 Sheet。
 
     - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED 填充（计算过程表标记用）；
-    - risk_col：按风险等级只给该列单元格着色（监测点 BI/ADI 表）；
+    - risk_cols：按风险等级只给这些列着色（监测点 BI/ADI/整合表，仅风险水平列）；
     - merge_cols：纵向合并这些列中连续相同的单元格；
-    - center：所有单元格水平 + 垂直居中。
+    - center：所有单元格水平 + 垂直居中；
+    - header_rename：{df列名: 新表头}，写表头后改名（用于整合表两个“风险水平*”）。
     """
     out = _strip_internal(df)
     out.to_excel(writer, sheet_name=name, index=False)
     wb = writer.book
     ws = wb[name]
     ncols = len(out.columns)
+
+    # 表头改名（先于 header 映射构建）
+    if header_rename:
+        for df_col, new_name in header_rename.items():
+            if df_col in list(out.columns):
+                ws.cell(row=1, column=list(out.columns).index(df_col) + 1).value = new_name
+
     header = {c.value: c.column for c in ws[1]}
 
     # 数值列格式
@@ -82,14 +90,16 @@ def _write_sheet(writer, name, df, flag_col=None, risk_col=None,
                 fill = PatternFill('solid', fgColor=color)
                 for c_idx in range(1, ncols + 1):
                     ws.cell(row=r_idx, column=c_idx).fill = fill
-    if risk_col:
-        col_idx = header.get(risk_col)
-        if col_idx:
+    if risk_cols:
+        for df_col in risk_cols:
+            if df_col not in list(out.columns):
+                continue
+            wcol = list(out.columns).index(df_col) + 1
             for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
-                risk = row.get(risk_col)
+                risk = row.get(df_col)
                 color = C.RISK_FILLS.get(risk)
                 if color:
-                    ws.cell(row=r_idx, column=col_idx).fill = PatternFill('solid', fgColor=color)
+                    ws.cell(row=r_idx, column=wcol).fill = PatternFill('solid', fgColor=color)
 
     # 纵向合并连续相同单元格
     if merge_cols:
@@ -115,15 +125,35 @@ def write_calc_workbook(path, calc_sheets):
 
 
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
-    """监测点汇总 Excel：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 删除数据情况说明"""
+    """监测点汇总 Excel：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 / Sheet4 删除数据情况说明"""
     bi = _display_frame(bi_final, 'BI*')
     adi = _display_frame(adi_final, 'ADI')
+    integrated = _build_integrated_frame(bi, adi)
     with pd_writer(path) as writer:
-        _write_sheet(writer, 'BI表', bi, risk_col='风险水平*',
+        _write_sheet(writer, 'BI表', bi, risk_cols=['风险水平*'],
                      merge_cols=['地市'], center=True)
-        _write_sheet(writer, 'ADI表', adi, risk_col='风险水平*',
+        _write_sheet(writer, 'ADI表', adi, risk_cols=['风险水平*'],
                      merge_cols=['地市'], center=True)
+        _write_sheet(writer, 'BI+ADI整合表', integrated,
+                     risk_cols=['ADI风险', 'BI风险'],
+                     merge_cols=['地市'], center=True,
+                     header_rename={'ADI风险': '风险水平*', 'BI风险': '风险水平*'})
         _write_sheet(writer, '删除数据情况说明', deletions)
+
+
+def _build_integrated_frame(bi, adi):
+    """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
+    缺失项写 '/'；列序 = 地市/区县/街道/监测地点/ADI/ADI风险/BI*/BI风险。"""
+    bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
+    adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
+    m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
+    for col in ('ADI', 'ADI风险', 'BI*', 'BI风险'):
+        if col not in m.columns:
+            m[col] = '/'
+        m[col] = m[col].where(m[col].notna(), '/')
+    m['_city_idx'] = m['地市'].map(C.CITY_INDEX).fillna(99).astype(int)
+    m = m.sort_values(['_city_idx', '区县', '街道', '监测地点'], kind='stable').reset_index(drop=True)
+    return m[['地市', '区县', '街道', '监测地点', 'ADI', 'ADI风险', 'BI*', 'BI风险']]
 
 
 def _display_frame(final, value_col):

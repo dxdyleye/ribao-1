@@ -222,15 +222,46 @@ def run_pipeline(source_df, target_date, exclude=None):
     bi_final, bi_sheets = _bi_ssi_pipeline(bi_ssi, del_rows)
     adi_final, adi_sheets = _adi_pipeline(adi_raw, del_rows)
 
-    # ---- 删除数据情况说明（3.9） ----
-    src_cols = list(source_df.columns)
+    # ---- 删除数据情况说明（3.9 修订版：列名同计算过程表、仅输入日期数据、按监测方法排序） ----
+    del_cols = ['地市', '区县', '街道', C.COL_LOC, C.COL_COMMUNITY,
+                C.COL_ADDR1, C.COL_ADDR2, C.COL_TYPE, '监测地点',
+                C.COL_METHOD, C.COL_VALUE]
+    method_order = {C.METHOD_BI: 0, C.METHOD_SSI: 1, C.METHOD_ADI: 2}
+
+    def _is_na(v):
+        return v is None or (isinstance(v, float) and v != v)
+
     rows = []
     for i, reason in del_rows:
-        row = {c: source_df.at[i, c] for c in src_cols}
-        row['删除原因'] = reason
-        rows.append(row)
-    deletions = pd.DataFrame(rows, columns=src_cols + ['删除原因']) if rows else \
-        pd.DataFrame(columns=src_cols + ['删除原因'])
+        if reason == '监测时间为空':
+            continue                      # 仅说明输入日期的数据的处理情况（无日期行不计入）
+        r = source_df.loc[i]
+        loc = r.get(C.COL_LOC)
+        parsed = parse_location(loc) if not _is_na(loc) and str(loc).strip() else None
+        comm = r.get(C.COL_COMMUNITY)
+        typ = r.get(C.COL_TYPE)
+        mp = None
+        if not _is_na(comm) and not _is_na(typ) and str(comm).strip() and str(typ).strip():
+            mp = '%s（%s）' % (str(comm).strip(), str(typ).strip())
+        rows.append({
+            '地市': parsed[0] if parsed else None,
+            '区县': parsed[1] if parsed else None,
+            '街道': parsed[2] if parsed else None,
+            C.COL_LOC: r.get(C.COL_LOC),
+            C.COL_COMMUNITY: comm,
+            C.COL_ADDR1: r.get(C.COL_ADDR1),
+            C.COL_ADDR2: r.get(C.COL_ADDR2),
+            C.COL_TYPE: typ,
+            '监测地点': mp,
+            C.COL_METHOD: r.get(C.COL_METHOD),
+            C.COL_VALUE: r.get(C.COL_VALUE),
+            '删除原因': reason,
+        })
+    deletions = pd.DataFrame(rows, columns=del_cols + ['删除原因']) if rows else \
+        pd.DataFrame(columns=del_cols + ['删除原因'])
+    deletions['_mo'] = deletions[C.COL_METHOD].map(lambda m: method_order.get(m, 3))
+    deletions = deletions.sort_values(['_mo', C.COL_METHOD], kind='stable') \
+        .drop(columns=['_mo']).reset_index(drop=True)
 
     res = PipelineResult()
     res.base = base
