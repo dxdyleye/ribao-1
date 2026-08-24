@@ -284,7 +284,8 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
         if adi_extra is not None and not adi_extra.empty:
             flight_adi_count = len(adi_extra)
             adi_final = pd.concat([adi_final, adi_extra], ignore_index=True)
-            adi_sheets['最终表(ADI)'] = (adi_final[['地市', '区县', '街道', '监测地点', 'ADI', '风险水平*']], None)
+            adi_sheets['最终表(ADI)'] = (adi_final[['地市', '区县', '街道', '监测地点', 'ADI', '风险水平*']]
+                                        .rename(columns={'ADI': 'ADI*'}), None)
 
     # ---- 删除数据情况说明（3.9 修订：列同计算过程表、仅输入日期数据、按删除原因排序、含监测日期） ----
     del_cols = ['地市', '区县', '街道', C.COL_LOC, C.COL_COMMUNITY,
@@ -449,7 +450,7 @@ def _adi_pipeline(adi_raw, del_rows):
     kept = apply_address_distinction(kept)
     sheet2 = kept[_BASE_SHEET_COLS + ['_modified']]
 
-    # Sheet3「最终表(ADI)」——指标列名用 ADI（与金标准/一览表一致）
+    # Sheet3「最终表(ADI)」——指标列名用 ADI*（与金标准/一览表一致）
     adi_final = kept[['地市', '区县', '街道', '监测地点', C.COL_VALUE, C.COL_TYPE]].copy()
     adi_final['ADI'] = adi_final[C.COL_VALUE]
     adi_final['风险水平*'] = adi_final[C.COL_VALUE].map(C.grade_adi)
@@ -458,7 +459,8 @@ def _adi_pipeline(adi_raw, del_rows):
     res = {}
     res['重复数据删除(ADI)'] = (sheet1, '_deleted')
     res['地址区分处理(ADI)'] = (sheet2, '_modified')
-    res['最终表(ADI)'] = (adi_final[['地市', '区县', '街道', '监测地点', 'ADI', '风险水平*']], None)
+    res['最终表(ADI)'] = (adi_final[['地市', '区县', '街道', '监测地点', 'ADI', '风险水平*']]
+                          .rename(columns={'ADI': 'ADI*'}), None)
     return adi_final, res
 
 

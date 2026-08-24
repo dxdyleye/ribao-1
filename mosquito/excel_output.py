@@ -18,7 +18,7 @@ from .parser import district_display_sheet
 from .pipeline import round1
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src')
-_NUM_COLS = ('监测指标值', 'BI*', 'ADI', '原BI值', '原SSI值', '转换后的SSI值')
+_NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
 
@@ -180,26 +180,26 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     字号：整合表五号(10.5)，其余 sheet 14；字体：中文 仿宋_GB2312、英文 Times New Roman。
     """
     bi = _display_frame(bi_final, 'BI*')
-    adi = _display_frame(adi_final, 'ADI')
+    adi = _display_frame(adi_final, 'ADI').rename(columns={'ADI': 'ADI*'})   # 指标列名用 ADI*
     integrated = _build_integrated_frame(bi, adi)
     with pd_writer(path) as writer:
         _write_sheet(writer, 'BI表', bi, risk_src={'BI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
-        _write_sheet(writer, 'ADI表', adi, risk_src={'ADI': '风险水平*'},
+        _write_sheet(writer, 'ADI表', adi, risk_src={'ADI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
-        _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI': 'ADI风险', 'BI*': 'BI风险'},
+        _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True, font_size=C.SIZE_WUHAO)
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 
 def _build_integrated_frame(bi, adi):
     """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
-    缺失项数值写 '/'；需求四后输出列 = 地市/区县/街道/监测地点/ADI/BI*（风险水平列仅内部用于着色）。
-    缺失项（'/'）内部风险按“安全”处理 → 背景同为安全绿色（92D050）。"""
+    缺失项数值写 '/'；输出列 = 地市/区县/街道/监测地点/ADI*/BI*（ADI 指标列名用 ADI*；
+    风险水平列仅内部用于着色）。缺失项（'/'）内部风险按“安全”处理 → 背景同为安全绿色（92D050）。"""
     bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
     adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
-    for col in ('ADI', 'BI*'):
+    for col in ('ADI*', 'BI*'):
         if col not in m.columns:
             m[col] = '/'
         m[col] = m[col].where(m[col].notna(), '/')
@@ -213,7 +213,7 @@ def _build_integrated_frame(bi, adi):
     m['_k3'] = m['监测地点'].map(_pinyin_key)
     m = m.sort_values(['_city_idx', '_k1', '_k2', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_k3']).reset_index(drop=True)
-    return m[['地市', '区县', '街道', '监测地点', 'ADI', 'ADI风险', 'BI*', 'BI风险']]
+    return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险']]
 
 
 def _display_frame(final, value_col):
