@@ -10,8 +10,8 @@ from . import excel_output, word_output
 from .pipeline import run_pipeline
 
 
-def process_file(input_path, output_dir, year, month, day, exclude=None, log=None):
-    """返回生成的 3 个文件完整路径列表（总库表为唯一输入）。"""
+def process_file(input_path, output_dir, year, month, day, exclude=None, flight_path=None, log=None):
+    """返回生成的 3 个文件完整路径列表（总库表为唯一输入；飞行监测表可选）。"""
     def logmsg(s):
         if log:
             log(s)
@@ -20,10 +20,18 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, log=Non
     source = pd.read_excel(input_path)
     target = date(year, month, day)
 
+    flight_df = None
+    if flight_path:
+        logmsg('正在读取飞行监测表文件…')
+        flight_df = pd.read_excel(flight_path)
+
     logmsg('正在预处理数据（日期筛选/空值/排除字段/距末例天数/防控区类型）…')
-    res = run_pipeline(source, target, exclude)
+    res = run_pipeline(source, target, exclude, flight_df=flight_df)
     logmsg('基础数据集 %d 条；最终BI表 %d 条；最终ADI表 %d 条'
            % (len(res.base), len(res.bi_final), len(res.adi_final)))
+    if res.flight_bi_count or res.flight_adi_count:
+        logmsg('飞行监测表：整合入BI %d 条、整合入ADI %d 条'
+               % (res.flight_bi_count, res.flight_adi_count))
 
     os.makedirs(output_dir, exist_ok=True)
     paths = []
@@ -36,8 +44,8 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, log=Non
 
     # 2 日报 Word（叙述版）
     logmsg('正在生成日报Word…')
-    bi_sec = word_output.build_section(res.bi_final, exclude, res.excluded_cities, 'BI')
-    adi_sec = word_output.build_section(res.adi_final, exclude, res.excluded_cities, 'ADI')
+    bi_sec = word_output.build_section(res.bi_final, res.exclude_display, res.excluded_cities, 'BI')
+    adi_sec = word_output.build_section(res.adi_final, res.exclude_display, res.excluded_cities, 'ADI')
     p = os.path.join(output_dir, C.daily_docx_name(year, month, day))
     word_output.write_daily_report(p, target, bi_sec, adi_sec)
     paths.append(p)

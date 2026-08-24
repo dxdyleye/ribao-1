@@ -72,18 +72,23 @@ def _merge_same_values(ws, col_idx):
                        end_row=max_row, end_column=col_idx)
 
 
-def _write_sheet(writer, name, df, flag_col=None, risk_cols=None,
-                 merge_cols=None, center=False, header_rename=None, font_size=None):
+def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
+                 drop_cols=None, merge_cols=None, center=False, header_rename=None, font_size=None):
     """写入一个 Sheet。
 
     - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED 填充（计算过程表标记用）；
-    - risk_cols：按风险等级只给这些列着色（监测点 BI/ADI/整合表，仅风险水平列）；
+    - risk_cols：按风险等级只给这些列着色（风险水平文字列，如“安全/低风险/…”）；
+    - risk_src：{输出列: 风险水平文字列}，按风险等级给输出列着色（需求四：颜色套用到 BI*/ADI* 列，
+      风险文字列本身不输出）；
+    - drop_cols：写入前删除的 df 列（如被 risk_src 借用、不输出的“风险水平*”）；
     - merge_cols：纵向合并这些列中连续相同的单元格；
     - center：所有单元格水平 + 垂直居中；
     - header_rename：{df列名: 新表头}，写表头后改名（用于整合表两个“风险水平*”）；
     - font_size：单元格字号（None 用默认）；所有单元格中文字体 仿宋_GB2312、英文 Times New Roman。
     """
     out = _strip_internal(df)
+    if drop_cols:
+        out = out.drop(columns=[c for c in drop_cols if c in out.columns])
     out.to_excel(writer, sheet_name=name, index=False)
     wb = writer.book
     ws = wb[name]
@@ -132,6 +137,16 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None,
                 color = C.RISK_FILLS.get(risk)
                 if color:
                     ws.cell(row=r_idx, column=wcol).fill = PatternFill('solid', fgColor=color)
+    if risk_src:
+        for out_col, src_col in risk_src.items():
+            if out_col not in list(out.columns):
+                continue
+            wcol = list(out.columns).index(out_col) + 1
+            for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
+                risk = row.get(src_col)
+                color = C.RISK_FILLS.get(risk)
+                if color:
+                    ws.cell(row=r_idx, column=wcol).fill = PatternFill('solid', fgColor=color)
 
     # 纵向合并连续相同单元格
     if merge_cols:
@@ -160,26 +175,25 @@ def write_calc_workbook(path, calc_sheets):
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 / Sheet4 删除数据情况说明
 
+    需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列。
     字号：整合表五号(10.5)，其余 sheet 14；字体：中文 仿宋_GB2312、英文 Times New Roman。
     """
     bi = _display_frame(bi_final, 'BI*')
     adi = _display_frame(adi_final, 'ADI')
     integrated = _build_integrated_frame(bi, adi)
     with pd_writer(path) as writer:
-        _write_sheet(writer, 'BI表', bi, risk_cols=['风险水平*'],
-                     merge_cols=['地市'], center=True, font_size=C.SIZE_14)
-        _write_sheet(writer, 'ADI表', adi, risk_cols=['风险水平*'],
-                     merge_cols=['地市'], center=True, font_size=C.SIZE_14)
-        _write_sheet(writer, 'BI+ADI整合表', integrated,
-                     risk_cols=['ADI风险', 'BI风险'],
-                     merge_cols=['地市'], center=True, font_size=C.SIZE_WUHAO,
-                     header_rename={'ADI风险': '风险水平*', 'BI风险': '风险水平*'})
+        _write_sheet(writer, 'BI表', bi, risk_src={'BI*': '风险水平*'},
+                     drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
+        _write_sheet(writer, 'ADI表', adi, risk_src={'ADI': '风险水平*'},
+                     drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
+        _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI': 'ADI风险', 'BI*': 'BI风险'},
+                     drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True, font_size=C.SIZE_WUHAO)
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 
 def _build_integrated_frame(bi, adi):
     """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
-    缺失项写 '/'；列序 = 地市/区县/街道/监测地点/ADI/ADI风险/BI*/BI风险。"""
+    缺失项写 '/'；需求四后输出列 = 地市/区县/街道/监测地点/ADI/BI*（风险水平列仅内部用于着色）。"""
     bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
     adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')

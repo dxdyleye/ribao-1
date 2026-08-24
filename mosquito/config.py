@@ -22,6 +22,10 @@ METHOD_ADI = '成蚊密度指数法ADI'
 BI_SSI_METHODS = (METHOD_BI, METHOD_SSI)
 ALL_PROCESSED_METHODS = (METHOD_BI, METHOD_SSI, METHOD_ADI)
 
+# ---------- 飞行监测表（可选输入）----------
+FLIGHT_COL_ADI = 'ADI值（自动计算）'
+FLIGHT_COL_BI = 'BI值（自动计算）'
+
 # ---------- 防控区类型 ----------
 VALID_TYPES = ('核心区', '警戒区')
 
