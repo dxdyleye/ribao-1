@@ -175,7 +175,8 @@ def write_calc_workbook(path, calc_sheets):
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 / Sheet4 删除数据情况说明
 
-    需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列。
+    需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
+    整合表缺失项（'/'）背景同安全绿色（92D050）。
     字号：整合表五号(10.5)，其余 sheet 14；字体：中文 仿宋_GB2312、英文 Times New Roman。
     """
     bi = _display_frame(bi_final, 'BI*')
@@ -193,14 +194,19 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
 
 def _build_integrated_frame(bi, adi):
     """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
-    缺失项写 '/'；需求四后输出列 = 地市/区县/街道/监测地点/ADI/BI*（风险水平列仅内部用于着色）。"""
+    缺失项数值写 '/'；需求四后输出列 = 地市/区县/街道/监测地点/ADI/BI*（风险水平列仅内部用于着色）。
+    缺失项（'/'）内部风险按“安全”处理 → 背景同为安全绿色（92D050）。"""
     bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
     adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
-    for col in ('ADI', 'ADI风险', 'BI*', 'BI风险'):
+    for col in ('ADI', 'BI*'):
         if col not in m.columns:
             m[col] = '/'
         m[col] = m[col].where(m[col].notna(), '/')
+    for col in ('ADI风险', 'BI风险'):
+        if col not in m.columns:
+            m[col] = '安全'
+        m[col] = m[col].where(m[col].notna(), '安全')
     m['_city_idx'] = m['地市'].map(C.CITY_INDEX).fillna(99).astype(int)
     m['_k1'] = m['区县'].map(_pinyin_key)
     m['_k2'] = m['街道'].map(_pinyin_key)
