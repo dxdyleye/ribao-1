@@ -228,10 +228,10 @@ class App(object):
             return
         ex_terms = []
         for r in self.excl_rows:
-            f = r['entry'].get().strip()
-            if f:
+            ex_field = r['entry'].get().strip()
+            if ex_field:
                 conn = r['connector'].get() if r['connector'] is not None else None
-                ex_terms.append({'field': f, 'connector': conn})
+                ex_terms.append({'field': ex_field, 'connector': conn})
         exclude = ex_terms if ex_terms else None
         fp = self.entry_flight.get().strip() or None
         if fp and not os.path.isfile(fp):
