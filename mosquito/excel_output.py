@@ -208,11 +208,31 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
         ws.column_dimensions[letter].width = min(maxlen + 2, 60)
 
 
+def _sort_like_integrated(df):
+    """按村居一览表 BI+ADI整合表 的排序规则排序（计算过程 Excel 各 sheet 通用）：
+    地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 社区/村居 → 防控区类型（核心区→警戒区→其他）→ 监测地点升序（拼音）。
+    需包含 地市/区县/街道/监测地点 列；社区与类型从监测地点提取。"""
+    if df is None or df.empty:
+        return df
+    if not {'地市', '区县', '街道', '监测地点'}.issubset(df.columns):
+        return df
+    df = df.copy()
+    df['_city_idx'] = df['地市'].map(C.CITY_INDEX).fillna(99).astype(int)
+    df['_k1'] = df['区县'].map(_pinyin_key)
+    df['_k2'] = df['街道'].map(_pinyin_key)
+    df['_kcomm'] = df['监测地点'].map(_community_sort_key)
+    df['_ktype'] = df['监测地点'].map(_type_sort_key)
+    df['_k3'] = df['监测地点'].map(_pinyin_key)
+    df = df.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
+        .drop(columns=['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
+    return df
+
+
 def write_calc_workbook(path, calc_sheets):
-    """计算过程 Excel：BI_ADI_计算过程_MM月DD日.xlsx（9 个 Sheet）"""
+    """计算过程 Excel：BI_ADI_计算过程_MM月DD日.xlsx（9 个 Sheet，均按村居一览表整合表规则排序）"""
     with pd_writer(path) as writer:
         for name, (df, flag) in calc_sheets.items():
-            _write_sheet(writer, name, df, flag_col=flag)
+            _write_sheet(writer, name, _sort_like_integrated(df), flag_col=flag)
 
 
 
