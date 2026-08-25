@@ -17,6 +17,8 @@ from . import config as C
 from .parser import district_display_sheet
 from .pipeline import round1
 
+import re
+
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
@@ -38,6 +40,22 @@ def _pinyin_key(s):
         return s.encode('gbk').hex()
     except UnicodeEncodeError:
         return s
+
+
+_TYPE_ORDER = {'核心区': 0, '警戒区': 1}   # 同街道内防控区类型排列：核心区 → 警戒区 → 其他
+_TYPE_SUFFIX_RE = re.compile(r'（\d+）\s*$')
+_TYPE_RE = re.compile(r'（([^（）]*?)）$')
+
+
+def _type_sort_key(mp):
+    """从监测地点提取防控区类型作为排序键（去掉冲突序号（1）与“，飞行监测”标记）：
+    核心区=0、警戒区=1、其他类型=2。"""
+    s = str(mp)
+    s = _TYPE_SUFFIX_RE.sub('', s)                       # 去掉（1）（2）… 冲突序号
+    m = _TYPE_RE.search(s)
+    t = m.group(1) if m else ''
+    t = t.replace('，飞行监测', '')
+    return _TYPE_ORDER.get(t, 2)
 
 
 def _cell_font(size, text):
@@ -210,23 +228,25 @@ def _build_integrated_frame(bi, adi):
     m['_city_idx'] = m['地市'].map(C.CITY_INDEX).fillna(99).astype(int)
     m['_k1'] = m['区县'].map(_pinyin_key)
     m['_k2'] = m['街道'].map(_pinyin_key)
+    m['_ktype'] = m['监测地点'].map(_type_sort_key)      # 同街道内 核心区 → 警戒区
     m['_k3'] = m['监测地点'].map(_pinyin_key)
-    m = m.sort_values(['_city_idx', '_k1', '_k2', '_k3'], kind='stable') \
-        .drop(columns=['_k1', '_k2', '_k3']).reset_index(drop=True)
+    m = m.sort_values(['_city_idx', '_k1', '_k2', '_ktype', '_k3'], kind='stable') \
+        .drop(columns=['_k1', '_k2', '_ktype', '_k3']).reset_index(drop=True)
     return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险']]
 
 
 def _display_frame(final, value_col):
     """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
-    排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 监测地点升序（拼音）"""
+    排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 防控区类型（核心区→警戒区）→ 监测地点升序（拼音）"""
     df = final.copy()
     df['区县'] = df['区县'].map(district_display_sheet)
     df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
     df['_k1'] = df['区县'].map(_pinyin_key)
     df['_k2'] = df['街道'].map(_pinyin_key)
+    df['_ktype'] = df['监测地点'].map(_type_sort_key)      # 同街道内 核心区 → 警戒区
     df['_k3'] = df['监测地点'].map(_pinyin_key)
-    df = df.sort_values(['_city_idx', '_k1', '_k2', '_k3'], kind='stable') \
-        .drop(columns=['_k1', '_k2', '_k3']).reset_index(drop=True)
+    df = df.sort_values(['_city_idx', '_k1', '_k2', '_ktype', '_k3'], kind='stable') \
+        .drop(columns=['_k1', '_k2', '_ktype', '_k3']).reset_index(drop=True)
     return df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*']]
 
 
