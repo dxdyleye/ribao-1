@@ -20,7 +20,7 @@ from .pipeline import round1
 import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src')
-_NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值')
+_NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
 

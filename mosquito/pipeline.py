@@ -3,7 +3,8 @@
 
 关键规则（已按金标准实测校准）：
 - 数值保留源精度（不四舍五入到 1 位小数）。
-- BI 表 = BI 方法行 + “无同键 BI”的 SSI 行（×2 换算并入）；有同键 BI 的 SSI 行丢弃（不取大合并）。
+- BI 表 = BI 方法行 + “无同键 BI”的 SSI 行（×2 换算并入）；有同键 BI 的 SSI 行不并入，
+  但转换后 SSI 值 ≥ 5 时与原 BI 值取大者作为最终值（D55）。
 - 按完整键 K=(地市-区/县/市-街道/乡/镇, 社区/村居, 地址1, 地址2, 防控区类型) 去重，保留最大值。
 - 地址区分：仅对 (地市-区/县/市-街道/乡/镇, 社区/村居, 防控区类型) 组内存在 >=2 个不同地址的行改名。
 """
@@ -453,28 +454,45 @@ def _bi_ssi_pipeline(bi_ssi, del_rows):
     ssi_matched = ssi[ssi['_in_bi']].copy()
     record_list = []
     for i in ssi_matched.index:
-        record_list.append((i, 'SSI记录与同键BI记录重复（保留BI）'))
+        record_list.append((i, 'SSI记录与同键BI记录重复'))
     for i, reason in record_list:
         del_rows.append((i, reason))
 
-    # ---- Sheet2「BI+SSI(不重复)」：BI 行 + 并入的 SSI 行（黄） ----
+    # ---- 同键 SSI 处理（新规则）：SSI×2 < 5 → 不并入（保留原BI值）；
+    #      SSI×2 >= 5 → 与原BI值取大者作为最终值，并提升该K的BI值 ----
+    rows3 = []
+    bi_raise = {}          # K -> 最终BI值（仅当 SSI×2 >= 5 时提升）
+    for k, grp in ssi_matched.groupby('_K'):
+        bgrp = bi[bi['_K'] == k]
+        max_bi = bgrp[C.COL_VALUE].max()        # 原BI值（同键BI最大值，D8）
+        best = grp.loc[grp['_conv'].idxmax()]   # 多条SSI取转换后最大值（D8）
+        conv = best['_conv']
+        if conv >= 5:
+            final_val = max(max_bi, conv)
+            bi_raise[k] = final_val
+        else:
+            final_val = max_bi
+        row = best[_BASE_SHEET_COLS].copy()
+        row['原BI值'] = max_bi
+        row['原SSI值'] = best['_orig']
+        row['转换后的SSI值'] = conv
+        row['最终BI值'] = final_val
+        rows3.append(row)
+    # 提升同键 BI 的最终值（SSI×2 >= 5 且大于原BI值时）
+    if bi_raise:
+        for k, final_val in bi_raise.items():
+            bgrp = bi[bi['_K'] == k]
+            max_idx = bgrp[C.COL_VALUE].idxmax()
+            bi.loc[max_idx, C.COL_VALUE] = final_val
+
+    # ---- Sheet2「BI+SSI(不重复)」：BI 行（含提升后的最终值）+ 并入的 SSI 行（黄） ----
     bi2 = bi.copy()
     bi2['_yellow'] = False
     sheet2 = pd.concat([bi2, ssi_only])[_BASE_SHEET_COLS + ['_yellow']]
 
-    # ---- Sheet3「BI+SSI(重复)+取较大值处理」：被丢弃的同键 SSI 行（红）+ 追溯列 ----
-    rows3 = []
-    for k, grp in ssi_matched.groupby('_K'):
-        bgrp = bi[bi['_K'] == k]
-        max_bi = bgrp[C.COL_VALUE].max()
-        best = grp.loc[grp['_conv'].idxmax()]
-        row = best[_BASE_SHEET_COLS].copy()
-        row['原BI值'] = max_bi
-        row['原SSI值'] = best['_orig']
-        row['转换后的SSI值'] = best['_conv']
-        rows3.append(row)
+    # ---- Sheet3「BI与SSI重复处理」：被丢弃的同键 SSI 行 + 追溯列（含最终BI值） ----
     sheet3 = pd.DataFrame(rows3) if rows3 else \
-        pd.DataFrame(columns=_BASE_SHEET_COLS + ['原BI值', '原SSI值', '转换后的SSI值'])
+        pd.DataFrame(columns=_BASE_SHEET_COLS + ['原BI值', '原SSI值', '转换后的SSI值', '最终BI值'])
     sheet3['_deleted'] = True
 
     # ---- Sheet4「重复数据删除(BI)」：去重（被删行红） ----
@@ -496,7 +514,7 @@ def _bi_ssi_pipeline(bi_ssi, del_rows):
     res = {}
     res['SSI表'] = (sheet1, None)
     res['BI+SSI(不重复)'] = (sheet2, '_yellow')
-    res['BI+SSI(重复)+取较大值处理'] = (sheet3, None)   # 背景无色（D40）
+    res['BI与SSI重复处理'] = (sheet3, None)   # 背景无色（D40）
     res['重复数据删除(BI)'] = (sheet4, '_deleted')
     res['地址区分处理(BI)'] = (sheet5, '_modified')
     res['最终表(BI)'] = (bi_final[['地市', '区县', '街道', '监测地点', 'BI*', '风险水平*']], None)
