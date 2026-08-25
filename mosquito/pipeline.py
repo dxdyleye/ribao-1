@@ -305,9 +305,14 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
                 excluded_cities.add(parsed[0])
         df = df[~mask_ex]
 
-    # ---- P6 距末例天数（保留 <=5 或 >40000） ----
+    # ---- P6 距末例天数（保留 <=5 或 >40000；其中 >40000 的记录仅保留 距首例天数 <=5 或 >40000 的，D56） ----
     days = pd.to_numeric(df[C.COL_DAYS], errors='coerce')
     keep_days = days.notna() & ((days <= C.DAYS_LOW) | (days > C.DAYS_HIGH))
+    if C.COL_FIRST_DAYS in df.columns:
+        first_days = pd.to_numeric(df[C.COL_FIRST_DAYS], errors='coerce')
+        keep_high = first_days.notna() & ((first_days <= C.DAYS_LOW) | (first_days > C.DAYS_HIGH))
+        # 距末例天数 > 40000 的记录：另需 距首例天数 在保留范围（负值/0 视为 <=5）
+        keep_days = keep_days & (~(days > C.DAYS_HIGH) | keep_high)
     record(list(df.index[~keep_days]), '距末例天数不在范围内')
     df = df[keep_days]
 
