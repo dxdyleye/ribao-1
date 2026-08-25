@@ -7,7 +7,7 @@ import pandas as pd
 
 from . import config as C
 from . import excel_output, word_output
-from .pipeline import run_pipeline
+from .pipeline import ProcessingError, run_pipeline
 
 
 def process_file(input_path, output_dir, year, month, day, exclude=None, flight_path=None, log=None):
@@ -16,12 +16,17 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, flight_
         if log:
             log(s)
 
+    # 读取前显式校验文件存在（云占位/网络盘未下载或文件被移动/删除时给出明确提示）
+    if not input_path or not os.path.isfile(input_path):
+        raise ProcessingError('输入总库表文件不存在或已被移动/删除：\n%s\n请重新选择文件（网盘/OneDrive 文件请先下载到本地）。' % input_path)
     logmsg('正在读取总库表文件…')
     source = pd.read_excel(input_path)
     target = date(year, month, day)
 
     flight_df = None
     if flight_path:
+        if not os.path.isfile(flight_path):
+            raise ProcessingError('飞行监测表文件不存在或已被移动/删除：\n%s\n请重新选择文件（网盘/OneDrive 文件请先下载到本地）。' % flight_path)
         logmsg('正在读取飞行监测表文件…')
         flight_df = pd.read_excel(flight_path)
 

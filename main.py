@@ -245,6 +245,8 @@ class App(object):
             self.q.put(('done', paths))
         except ProcessingError as e:
             self.q.put(('error', '处理中止：%s' % e))
+        except FileNotFoundError as e:
+            self.q.put(('error', '文件不存在或无法访问（可能已被移动/删除，或网盘文件未下载到本地）：\n%s' % e))
         except Exception:
             self.q.put(('error', '发生未预期错误：\n%s' % traceback.format_exc()))
 
