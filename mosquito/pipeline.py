@@ -106,74 +106,142 @@ def _clean_addr(addr, loc, community, type_):
     return s
 
 
+def _addr_of_pref(col_primary, col_secondary):
+    """地址取值函数：优先取 col_primary，为空则取 col_secondary；皆空返回 None"""
+    def pref(r):
+        a = r[col_primary]
+        if a is None or (isinstance(a, float) and a != a) or str(a).strip() == '':
+            a = r[col_secondary]
+        if a is None or (isinstance(a, float) and a != a) or str(a).strip() == '':
+            return None
+        return str(a).strip()
+    return pref
+
+
+def _group_candidates(frame, idx, addr_pref):
+    """按给定地址来源计算组内每行的候选片段（清理地址后切分）；返回 {index: segs|None}, maxlen"""
+    rows = frame.loc[idx]
+    cand = {}
+    maxlen = 0
+    for i, r in rows.iterrows():
+        a = addr_pref(r)
+        if a is None:
+            cand[i] = None
+            continue
+        cleaned = _clean_addr(a, r[C.COL_LOC], r[C.COL_COMMUNITY], r[C.COL_TYPE])
+        segs = [s for s in _ADDR_SEP.split(cleaned) if s]
+        cand[i] = segs if segs else None
+        if segs:
+            maxlen = max(maxlen, len(segs))
+    return cand, maxlen
+
+
+def _extend_distinct(cand, maxlen):
+    """原规则第 4-5 步：逐步追加下一片段直至组内候选互异；返回 {index: addr|None}"""
+    cur = {}
+    for n in range(1, maxlen + 1):
+        cur = {}
+        for i, segs in cand.items():
+            cur[i] = ''.join(segs[:n]) if segs else None
+        vals = [v for v in cur.values() if v]
+        if len(vals) == len(set(vals)):
+            break
+    return cur
+
+
 def apply_address_distinction(frame):
     """3.8 地址区分：组 = (地市-区/县/市-街道/乡/镇, 社区/村居, 防控区类型)。
 
-    仅当组内存在 >=2 个不同地址时，逐行以“社区/村居（最小区分地址）（类型）”改名；
-    单地址组不改名（与金标准一致）。返回新增 '_modified' 标记的副本。
+    分别用“监测地址（地图定位版）优先”与“监测地址（手填）优先”两种来源按原规则
+    计算最小区分地址，取字段较短者作为最终值（等长时取地图定位版）；仍冲突的追加
+    （1）（2）… 序号。仅当组内存在 >=2 个不同地址时改名。返回新增 '_modified' 标记的副本。
     """
     frame = frame.copy()
     frame['_modified'] = False
     group_cols = [C.COL_LOC, C.COL_COMMUNITY, C.COL_TYPE]
-
-    def addr_of(r):
-        a = r[C.COL_ADDR1]
-        if a is None or (isinstance(a, float) and a != a) or str(a).strip() == '':
-            a = r[C.COL_ADDR2]
-        if a is None or (isinstance(a, float) and a != a) or str(a).strip() == '':
-            return None
-        return str(a).strip()
+    pref_map = _addr_of_pref(C.COL_ADDR1, C.COL_ADDR2)   # 地图定位版优先（原规则）
+    pref_hand = _addr_of_pref(C.COL_ADDR2, C.COL_ADDR1)  # 手填优先
 
     for key, idx in frame.groupby(group_cols).groups.items():
         rows = frame.loc[idx]
-        addrs = rows.apply(addr_of, axis=1)
-        if len(set(a for a in addrs if a)) < 2:
+        if len(set(a for a in rows.apply(pref_map, axis=1) if a)) < 2 \
+                and len(set(a for a in rows.apply(pref_hand, axis=1) if a)) < 2:
             continue
-        # 每行候选片段（地址优先取地图定位版，空则手填）
-        cand = {}
-        maxlen = 0
-        for i, r in rows.iterrows():
-            a = addr_of(r)
-            if a is None:
-                cand[i] = None
-                continue
-            cleaned = _clean_addr(a, r[C.COL_LOC], r[C.COL_COMMUNITY], r[C.COL_TYPE])
-            segs = [s for s in _ADDR_SEP.split(cleaned) if s]
-            cand[i] = segs if segs else None
-            if segs:
-                maxlen = max(maxlen, len(segs))
-        # 逐片段扩展直到组内候选互异
-        cur = {}
-        for n in range(1, maxlen + 1):
-            cur = {}
-            for i, segs in cand.items():
-                cur[i] = ''.join(segs[:n]) if segs else None
-            vals = [v for v in cur.values() if v]
-            if len(vals) == len(set(vals)):
-                break
-        # 冲突/无地址行：保持原监测地点，追加序号
+
+        cur_map, maxlen1 = _group_candidates(frame, idx, pref_map)
+        cur1 = _extend_distinct(cur_map, maxlen1)
+        cur_hand, maxlen2 = _group_candidates(frame, idx, pref_hand)
+        cur2 = _extend_distinct(cur_hand, maxlen2)
+
+        # 取两来源中字段较短的最小区分地址（等长取地图定位版）
+        chosen = {}
+        for i in idx:
+            a1 = cur1.get(i)
+            a2 = cur2.get(i)
+            if a1 is None and a2 is None:
+                chosen[i] = None
+            elif a1 is None:
+                chosen[i] = a2
+            elif a2 is None:
+                chosen[i] = a1
+            else:
+                chosen[i] = a1 if len(a1) <= len(a2) else a2
+
+        # 冲突处理：同值组内按“候选少者优先”为每条分配互异候选（取较短者）；
+        # 任一记录无法分配到互异候选时，该组整组按冲突处理（追加序号，与 3.8 第 6 步一致）
         groups = defaultdict(list)
-        for i, v in cur.items():
+        for i, v in chosen.items():
             groups[v].append(i)
+        final = {}
         for v, idxs in groups.items():
-            if len(idxs) > 1:
-                for j, i in enumerate(idxs, 1):
-                    new = '%s（%s）（%d）' % (frame.at[i, C.COL_COMMUNITY], frame.at[i, C.COL_TYPE], j)
-                    if new != frame.at[i, '监测地点']:
-                        frame.loc[i, '监测地点'] = new
-                        frame.loc[i, '_modified'] = True
-        # 正常改名：监测地点 = {社区/村居}（{最小区分地址}）（{防控区类型}）（3.8 修订）
-        for i, v in cur.items():
-            if v is None:
+            if v is None or len(idxs) == 1:
+                for i in idxs:
+                    final[i] = v
                 continue
+            opts = {}
+            for i in idxs:
+                cands = []
+                for x in (cur1.get(i), cur2.get(i)):
+                    if x and x not in cands:
+                        cands.append(x)
+                opts[i] = sorted(cands, key=len)      # 短者优先
+            used_in = set()
+            tmp = {}
+            ok = True
+            for i in sorted(opts, key=lambda i: (len(opts[i]), i)):
+                pick = next((x for x in opts[i] if x not in used_in), None)
+                if pick is None:
+                    ok = False
+                    break
+                tmp[i] = pick
+                used_in.add(pick)
+            if ok:
+                final.update(tmp)
+            else:
+                for i in idxs:
+                    final[i] = None                   # 整组冲突
+
+        # 正常改名：监测地点 = {社区/村居}（{最小区分地址}）（{防控区类型}）（3.8 修订）
+        for i in idx:
             comm = frame.at[i, C.COL_COMMUNITY]
             typ = frame.at[i, C.COL_TYPE]
+            v = final.get(i)
+            if v is None:
+                continue
             while v.startswith(comm):
                 v = v[len(comm):]
             new = '%s（%s）（%s）' % (comm, v, typ)
             if new != frame.at[i, '监测地点']:
                 frame.loc[i, '监测地点'] = new
                 frame.loc[i, '_modified'] = True
+        # 冲突/无地址行：保持原监测地点，追加序号（（1）（2）…）
+        none_idx = [i for i in idx if final.get(i) is None]
+        if len(none_idx) > 1:
+            for j, i in enumerate(none_idx, 1):
+                new = '%s（%s）（%d）' % (frame.at[i, C.COL_COMMUNITY], frame.at[i, C.COL_TYPE], j)
+                if new != frame.at[i, '监测地点']:
+                    frame.loc[i, '监测地点'] = new
+                    frame.loc[i, '_modified'] = True
     return frame
 
 
