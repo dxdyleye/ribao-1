@@ -10,7 +10,7 @@
 - 字体：含中文的单元格用 仿宋_GB2312，纯英文/数字单元格用 Times New Roman
   （xlsx 单格仅支持一个字体名，无法像 Word 那样按脚本分别设置）。
 """
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from . import config as C
@@ -98,7 +98,8 @@ def _merge_same_values(ws, col_idx):
 
 
 def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
-                 drop_cols=None, merge_cols=None, center=False, header_rename=None, font_size=None):
+                 drop_cols=None, merge_cols=None, center=False, header_rename=None, font_size=None,
+                 borders=False):
     """写入一个 Sheet。
 
     - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED 填充（计算过程表标记用）；
@@ -109,7 +110,8 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
     - merge_cols：纵向合并这些列中连续相同的单元格；
     - center：所有单元格水平 + 垂直居中；
     - header_rename：{df列名: 新表头}，写表头后改名（用于整合表两个“风险水平*”）；
-    - font_size：单元格字号（None 用默认）；所有单元格中文字体 仿宋_GB2312、英文 Times New Roman。
+    - font_size：单元格字号（None 用默认）；所有单元格中文字体 仿宋_GB2312、英文 Times New Roman；
+    - borders：为有内容的单元格（含表头）显示全部框线（细线）。
     """
     out = _strip_internal(df)
     if drop_cols:
@@ -180,6 +182,14 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
             if col_idx:
                 _merge_same_values(ws, col_idx)
 
+    # 有内容的单元格（含表头）显示全部框线（细线）
+    if borders:
+        thin = Side(style='thin')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for r in range(1, ws.max_row + 1):
+            for c in range(1, ncols + 1):
+                ws.cell(row=r, column=c).border = border
+
     # 列宽（按内容自适应，上限 60）
     for c_idx in range(1, ncols + 1):
         letter = get_column_letter(c_idx)
@@ -202,7 +212,8 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
 
     需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
     整合表缺失项（'/'）背景同安全绿色（92D050）。
-    字号：整合表五号(10.5)，其余 sheet 14；字体：中文 仿宋_GB2312、英文 Times New Roman。
+    字号：整合表小四(12)，其余 sheet 14；整合表有内容的单元格显示全部框线；
+    字体：中文 仿宋_GB2312、英文 Times New Roman。
     """
     bi = _display_frame(bi_final, 'BI*')
     adi = _display_frame(adi_final, 'ADI').rename(columns={'ADI': 'ADI*'})   # 指标列名用 ADI*
@@ -213,7 +224,8 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
         _write_sheet(writer, 'ADI表', adi, risk_src={'ADI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
         _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
-                     drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True, font_size=C.SIZE_WUHAO)
+                     drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
+                     font_size=C.SIZE_XIAOSI, borders=True)
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 

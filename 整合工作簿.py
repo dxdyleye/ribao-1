@@ -17,7 +17,7 @@ import sys
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from mosquito import config as C
 from mosquito.excel_output import _build_integrated_frame, _has_cjk, _pinyin_key
@@ -53,11 +53,12 @@ def write_sheet3(wb, frame, sheet_name='Sheet3'):
     if sheet_name in wb.sheetnames:
         del wb[sheet_name]
     ws = wb.create_sheet(sheet_name)
+    font_size = C.SIZE_XIAOSI      # 小四
 
     # 表头
     for j, name in enumerate(_OUT_COLS, 1):
         cell = ws.cell(row=1, column=j, value=name)
-        cell.font = Font(name=C.FONT_CN, size=C.SIZE_WUHAO)
+        cell.font = Font(name=C.FONT_CN, size=font_size)
         cell.alignment = _CENTER
 
     # 数据行 + 风险着色
@@ -65,7 +66,7 @@ def write_sheet3(wb, frame, sheet_name='Sheet3'):
         for j, col in enumerate(_OUT_COLS, 1):
             v = r[col]
             cell = ws.cell(row=i, column=j, value=v)
-            cell.font = Font(name=C.FONT_CN if _has_cjk(v) else C.FONT_EN, size=C.SIZE_WUHAO)
+            cell.font = Font(name=C.FONT_CN if _has_cjk(v) else C.FONT_EN, size=font_size)
             cell.alignment = _CENTER
             if col in ('ADI*', 'BI*') and isinstance(v, (int, float)):
                 cell.number_format = '0.0'
@@ -88,6 +89,13 @@ def write_sheet3(wb, frame, sheet_name='Sheet3'):
                 prev = cur
         if max_row > start:
             ws.merge_cells(start_row=start, start_column=1, end_row=max_row, end_column=1)
+
+    # 有内容的单元格（含表头）显示全部框线（细线）
+    thin = Side(style='thin')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=len(_OUT_COLS)):
+        for cell in row:
+            cell.border = border
 
     # 列宽
     for j, col in enumerate(_OUT_COLS, 1):

@@ -75,7 +75,8 @@ FILL_RED = 'FF0000'     # 标记红（被删除行）
 # ---------- 字体（所有输出文件：中文 仿宋_GB2312，英文 Times New Roman） ----------
 FONT_CN = '仿宋_GB2312'
 FONT_EN = 'Times New Roman'
-SIZE_WUHAO = 10.5       # 五号（整合表）
+SIZE_WUHAO = 10.5       # 五号（原整合表）
+SIZE_XIAOSI = 12        # 小四（BI+ADI整合表）
 SIZE_14 = 14            # 其他 sheet 字号（村居一览表）
 
 # ---------- 输出文件命名（月日不补零，全角冒号；计算过程表两位补零） ----------
