@@ -134,6 +134,11 @@ class App(object):
         if p:
             self.entry_file.delete(0, 'end')
             self.entry_file.insert(0, p)
+            if not os.path.isfile(p):
+                messagebox.showwarning(
+                    '路径提示',
+                    '所选文件当前无法访问（可能是网盘/OneDrive 在线占位文件未下载到本地，'
+                    '或路径含特殊字符）：\n%s\n\n请先在资源管理器中右键该文件→“始终保留在此设备上/下载”，再重新选择。' % p)
             if not self.entry_out.get().strip():
                 self.entry_out.delete(0, 'end')
                 self.entry_out.insert(0, os.path.dirname(p))
@@ -145,6 +150,11 @@ class App(object):
         if p:
             self.entry_flight.delete(0, 'end')
             self.entry_flight.insert(0, p)
+            if not os.path.isfile(p):
+                messagebox.showwarning(
+                    '路径提示',
+                    '所选飞行监测表当前无法访问（可能是网盘/OneDrive 在线占位文件未下载到本地）：\n%s\n\n'
+                    '请先在资源管理器中右键该文件→“始终保留在此设备上/下载”，再重新选择。' % p)
 
     def choose_dir(self):
         p = filedialog.askdirectory(title='选择输出目录')
@@ -234,6 +244,11 @@ class App(object):
         self.running = True
         self.btn.configure(state='disabled')
         self.log('开始处理…')
+        self.log('总库表：%s' % f)
+        if fp:
+            self.log('飞行监测表：%s' % fp)
+        self.log('输出目录：%s' % out)
+        self.log('目标日期：%d年%d月%d日' % (target.year, target.month, target.day))
         threading.Thread(target=self.worker, args=(f, out, target, exclude, fp), daemon=True).start()
 
     def worker(self, f, out, target, exclude, flight_path):

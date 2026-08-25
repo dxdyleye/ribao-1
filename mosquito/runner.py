@@ -10,25 +10,56 @@ from . import excel_output, word_output
 from .pipeline import ProcessingError, run_pipeline
 
 
+def _check_input_file(input_path, label):
+    """读取前校验输入文件：区分“路径不存在”与“云占位/特殊文件不可读”，并列出同目录文件辅助排查。"""
+    if not input_path:
+        raise ProcessingError('未选择%s文件。' % label)
+    if os.path.isfile(input_path):
+        return
+    msg = ['%s文件无法读取：\n%s' % (label, input_path)]
+    if not os.path.exists(input_path):
+        msg.append('原因：该路径下找不到文件（可能已被移动/改名，或路径被改动）。')
+    else:
+        msg.append('原因：文件存在但无法作为普通文件读取（可能是网盘/OneDrive 在线占位文件）。\n'
+                   '请在资源管理器中右键该文件 →“始终保留在此设备上 / 下载”，再重新选择。')
+    parent = os.path.dirname(input_path)
+    try:
+        names = sorted(os.listdir(parent))
+        if names:
+            shown = names[:15]
+            msg.append('目录“%s”下的文件（前 %d 个，共 %d 个）：\n%s%s'
+                       % (parent, min(15, len(names)), len(names),
+                          '\n'.join('  · ' + n for n in shown),
+                          '\n  …' if len(names) > 15 else ''))
+        else:
+            msg.append('目录“%s”为空。' % parent)
+    except OSError:
+        msg.append('无法列出目录“%s”（目录可能不存在或无权访问）。' % parent)
+    raise ProcessingError('\n'.join(msg))
+
+
 def process_file(input_path, output_dir, year, month, day, exclude=None, flight_path=None, log=None):
     """返回生成的 3 个文件完整路径列表（总库表为唯一输入；飞行监测表可选）。"""
     def logmsg(s):
         if log:
             log(s)
 
-    # 读取前显式校验文件存在（云占位/网络盘未下载或文件被移动/删除时给出明确提示）
-    if not input_path or not os.path.isfile(input_path):
-        raise ProcessingError('输入总库表文件不存在或已被移动/删除：\n%s\n请重新选择文件（网盘/OneDrive 文件请先下载到本地）。' % input_path)
+    _check_input_file(input_path, '输入总库表')
     logmsg('正在读取总库表文件…')
-    source = pd.read_excel(input_path)
+    try:
+        source = pd.read_excel(input_path)
+    except OSError as e:
+        raise ProcessingError('读取总库表文件失败（%s）：\n%s' % (e, input_path))
     target = date(year, month, day)
 
     flight_df = None
     if flight_path:
-        if not os.path.isfile(flight_path):
-            raise ProcessingError('飞行监测表文件不存在或已被移动/删除：\n%s\n请重新选择文件（网盘/OneDrive 文件请先下载到本地）。' % flight_path)
+        _check_input_file(flight_path, '飞行监测表')
         logmsg('正在读取飞行监测表文件…')
-        flight_df = pd.read_excel(flight_path)
+        try:
+            flight_df = pd.read_excel(flight_path)
+        except OSError as e:
+            raise ProcessingError('读取飞行监测表文件失败（%s）：\n%s' % (e, flight_path))
 
     logmsg('正在预处理数据（日期筛选/空值/排除字段/距末例天数/防控区类型）…')
     res = run_pipeline(source, target, exclude, flight_df=flight_df)
