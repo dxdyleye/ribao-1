@@ -55,10 +55,10 @@ def write_sheet3(wb, frame, sheet_name='Sheet3'):
     ws = wb.create_sheet(sheet_name)
     font_size = C.SIZE_XIAOSI      # 小四
 
-    # 表头
+    # 表头（加粗）
     for j, name in enumerate(_OUT_COLS, 1):
         cell = ws.cell(row=1, column=j, value=name)
-        cell.font = Font(name=C.FONT_CN, size=font_size)
+        cell.font = Font(name=C.FONT_CN, size=font_size, bold=True)
         cell.alignment = _CENTER
 
     # 数据行 + 风险着色

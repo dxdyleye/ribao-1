@@ -65,11 +65,13 @@ def _community_sort_key(mp):
     return _pinyin_key(s[:i] if i >= 0 else s)
 
 
-def _cell_font(size, text):
+def _cell_font(size, text, bold=False):
     """含中文 -> 仿宋_GB2312；纯英文/数字 -> Times New Roman（xlsx 每格单一字体名）"""
     f = Font(name=C.FONT_CN if _has_cjk(text) else C.FONT_EN)
     if size:
         f.size = size
+    if bold:
+        f.bold = True
     return f
 
 
@@ -99,7 +101,7 @@ def _merge_same_values(ws, col_idx):
 
 def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                  drop_cols=None, merge_cols=None, center=False, header_rename=None, font_size=None,
-                 borders=False):
+                 borders=False, header_bold=False):
     """写入一个 Sheet。
 
     - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED 填充（计算过程表标记用）；
@@ -111,7 +113,8 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
     - center：所有单元格水平 + 垂直居中；
     - header_rename：{df列名: 新表头}，写表头后改名（用于整合表两个“风险水平*”）；
     - font_size：单元格字号（None 用默认）；所有单元格中文字体 仿宋_GB2312、英文 Times New Roman；
-    - borders：为有内容的单元格（含表头）显示全部框线（细线）。
+    - borders：为有内容的单元格（含表头）显示全部框线（细线）；
+    - header_bold：标题行（表头）加粗。
     """
     out = _strip_internal(df)
     if drop_cols:
@@ -145,6 +148,12 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
             cell.font = _cell_font(font_size, cell.value)
             if center:
                 cell.alignment = _CENTER
+
+    # 标题行（表头）加粗
+    if header_bold:
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=1, column=c)
+            cell.font = _cell_font(font_size, cell.value, bold=True)
 
     # 填充色
     if flag_col:
@@ -225,7 +234,7 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
         _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
-                     font_size=C.SIZE_XIAOSI, borders=True)
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 
