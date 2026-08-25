@@ -97,12 +97,16 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, flight_
         logmsg('飞行监测表：整合入BI %d 条、整合入ADI %d 条'
                % (res.flight_bi_count, res.flight_adi_count))
 
+    # 在目标目录下建立输出文件夹：省蚊媒监测日报（输入的日期），输出文件均放入其中
     os.makedirs(output_dir, exist_ok=True)
+    out_dir = os.path.join(output_dir, '省蚊媒监测日报（%d月%d日）' % (month, day))
+    os.makedirs(out_dir, exist_ok=True)
+    logmsg('输出文件夹：%s' % out_dir)
     paths = []
 
     # 1 计算过程 Excel（9 个 Sheet）
     logmsg('正在生成计算过程Excel…')
-    p = os.path.join(output_dir, C.calc_xlsx_name(year, month, day))
+    p = os.path.join(out_dir, C.calc_xlsx_name(year, month, day))
     excel_output.write_calc_workbook(p, res.calc_sheets)
     paths.append(p)
 
@@ -110,13 +114,13 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, flight_
     logmsg('正在生成日报Word…')
     bi_sec = word_output.build_section(res.bi_final, res.exclude_display, res.excluded_cities, 'BI')
     adi_sec = word_output.build_section(res.adi_final, res.exclude_display, res.excluded_cities, 'ADI')
-    p = os.path.join(output_dir, C.daily_docx_name(year, month, day))
+    p = os.path.join(out_dir, C.daily_docx_name(year, month, day))
     word_output.write_daily_report(p, target, bi_sec, adi_sec)
     paths.append(p)
 
     # 3 监测点汇总 Excel（村居一览表）
     logmsg('正在生成村居一览表Excel…')
-    p = os.path.join(output_dir, C.summary_xlsx_name(year, month, day))
+    p = os.path.join(out_dir, C.summary_xlsx_name(year, month, day))
     excel_output.write_monitoring_workbook(p, res.bi_final, res.adi_final, res.deletions)
     paths.append(p)
 
