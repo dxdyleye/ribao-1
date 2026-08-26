@@ -19,7 +19,8 @@ from .pipeline import round1
 
 import re
 
-_INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src')
+_INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
+                  '_dropped')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -159,7 +160,12 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
     if flag_col:
         for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
             if flag_col in df.columns and bool(row.get(flag_col)):
-                color = C.FILL_RED if flag_col.startswith('_deleted') else C.FILL_YELLOW
+                if flag_col.startswith('_deleted'):
+                    color = C.FILL_RED
+                elif flag_col == '_dropped':
+                    color = C.FILL_LIGHT_RED
+                else:
+                    color = C.FILL_YELLOW
                 fill = PatternFill('solid', fgColor=color)
                 for c_idx in range(1, ncols + 1):
                     ws.cell(row=r_idx, column=c_idx).fill = fill
@@ -233,6 +239,27 @@ def write_calc_workbook(path, calc_sheets):
     with pd_writer(path) as writer:
         for name, (df, flag) in calc_sheets.items():
             _write_sheet(writer, name, _sort_like_integrated(df), flag_col=flag)
+
+
+def write_base_workbook(path, base_bi, base_adi, messy_bi, messy_adi):
+    """基础数据集 Excel：基础数据集_MM月DD日.xlsx
+    Sheet1「BI基础数据集」/ Sheet2「ADI基础数据集」：基础数据集拆分，列 =
+    地市 | 地市-区/县/市-街道/乡/镇 | 区县 | 社区/村居 | 监测地点 | 监测地址（地图定位版）|
+    监测地址（手填）| 监测时间（年/月/日）| 监测方法 | 监测指标值；按一览表排序规则排序。
+    Sheet3「距首例和末例天数乱码处理（BI）」/ Sheet4「距首例和末例天数乱码处理（ADI）」：
+    末例>40000 且 首例>40000 的记录，在基础数据集列基础上新增 最初监测日期、距输入日期天数；
+    被放弃（间隔 > 5 天）的行背景浅红（FFC7CE）。"""
+    def _out(frame, extra=None):
+        df = _sort_like_integrated(frame)
+        df = df.drop(columns=['街道'], errors='ignore')
+        return df
+    with pd_writer(path) as writer:
+        _write_sheet(writer, 'BI基础数据集', _out(base_bi), font_size=C.SIZE_14)
+        _write_sheet(writer, 'ADI基础数据集', _out(base_adi), font_size=C.SIZE_14)
+        _write_sheet(writer, '距首例和末例天数乱码处理（BI）', _out(messy_bi),
+                     flag_col='_dropped', font_size=C.SIZE_14)
+        _write_sheet(writer, '距首例和末例天数乱码处理（ADI）', _out(messy_adi),
+                     flag_col='_dropped', font_size=C.SIZE_14)
 
 
 

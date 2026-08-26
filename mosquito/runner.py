@@ -124,5 +124,11 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, flight_
     excel_output.write_monitoring_workbook(p, res.bi_final, res.adi_final, res.deletions)
     paths.append(p)
 
+    # 4 基础数据集 Excel（BI/ADI基础数据集 + 乱码处理）
+    logmsg('正在生成基础数据集Excel…')
+    p = os.path.join(out_dir, C.base_xlsx_name(year, month, day))
+    excel_output.write_base_workbook(p, res.base_bi, res.base_adi, res.messy_bi, res.messy_adi)
+    paths.append(p)
+
     logmsg('全部完成。')
     return paths

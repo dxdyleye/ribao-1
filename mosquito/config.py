@@ -72,6 +72,7 @@ FILL_HIGH = 'FF0000'   # 高风险-红
 RISK_FILLS = {'安全': FILL_SAFE, '低风险': FILL_LOW, '中风险': FILL_MID, '高风险': FILL_HIGH}
 FILL_YELLOW = 'FFFF00'  # 标记黄（SSI来源 / 被修改行）
 FILL_RED = 'FF0000'     # 标记红（被删除行）
+FILL_LIGHT_RED = 'FFC7CE'  # 浅红（乱码处理中被放弃的行）
 
 # ---------- 字体（所有输出文件：中文 仿宋_GB2312，英文 Times New Roman） ----------
 FONT_CN = '仿宋_GB2312'
@@ -91,3 +92,7 @@ def summary_xlsx_name(year, month, day):
 
 def calc_xlsx_name(year, month, day):
     return 'BI_ADI_计算过程_%02d月%02d日.xlsx' % (month, day)
+
+
+def base_xlsx_name(year, month, day):
+    return '基础数据集_%02d月%02d日.xlsx' % (month, day)

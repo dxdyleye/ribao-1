@@ -50,18 +50,70 @@ def _exclude_matches(loc_str, exclude):
     return bool(res)
 
 
+def _is_new_exclude(exclude):
+    """判断是否为新的排除字段格式（列表项含 loc/comm 两列）"""
+    return isinstance(exclude, list) and bool(exclude) and any(
+        ('loc' in t or 'comm' in t) for t in exclude)
+
+
 def _exclude_matches_any(loc_str, comm_str, exclude):
-    """排除匹配扩展（D53）：对“地市-区/县/市-街道/乡/镇”或“社区/村居”两列分别匹配，
-    任一列命中排除表达式即返回 True。"""
+    """排除匹配：
+    - 新格式（列表项含 loc/comm）：每个排除字段 = 区/县/市-街道/乡/镇 与 社区/村居 两列；
+      字段内两列都填时为“与”（两列均命中才删除），只填一列时按该列匹配，都不填则该字段无效；
+      多个排除字段之间为“或”（任一字段命中即删除）。
+    - 旧格式（field/connector）保持兼容。"""
+    if _is_new_exclude(exclude):
+        for f in exclude:
+            loc_f = str(f.get('loc', '')).strip()
+            comm_f = str(f.get('comm', '')).strip()
+            if not loc_f and not comm_f:
+                continue
+            loc_ok = (not loc_f) or (loc_f in str(loc_str))
+            comm_ok = (not comm_f) or (comm_f in str(comm_str))
+            if loc_ok and comm_ok:
+                return True
+        return False
     return _exclude_matches(loc_str, exclude) or _exclude_matches(comm_str, exclude)
 
 
+def _common_prefix(strs):
+    """多个字符串的最长公共前缀"""
+    if not strs:
+        return ''
+    p = str(strs[0])
+    for s in strs[1:]:
+        s = str(s)
+        while not s.startswith(p):
+            p = p[:-1]
+            if not p:
+                return ''
+    return p
+
+
 def exclude_display(exclude):
-    """排除字段的展示串（供 Word 注记），如 “荔湾区” / “荔湾区或越秀区”；无则 None"""
+    """排除字段展示串（供 Word 注记）：
+    - 新格式：每个字段 = 区/县/市-街道/乡/镇 + 社区/村居 拼接；多个字段提取所有字段均有的
+      公共前缀放在最前（第一个字段保留），其后各字段去掉公共前缀，以、相隔。
+      例：罗定市素龙街道平南村委、罗定市素龙街道龙岗花园、罗定市罗城街道区屋居委
+          → 罗定市素龙街道平南村委、素龙街道龙岗花园、罗城街道区屋居委
+    - 旧格式（field/connector）保持兼容。"""
     if not exclude:
         return None
     if isinstance(exclude, str):
         return exclude.strip() or None
+    if _is_new_exclude(exclude):
+        fields = []
+        for f in exclude:
+            s = (str(f.get('loc', '')).strip() + str(f.get('comm', '')).strip()).strip()
+            if s:
+                fields.append(s)
+        if not fields:
+            return None
+        if len(fields) > 1:
+            common = _common_prefix(fields)
+            if common:
+                fields = [fields[0]] + [f[len(common):] for f in fields[1:]]
+        return '、'.join(fields)
     parts = []
     for i, t in enumerate(exclude):
         f = str(t.get('field', '')).strip()
@@ -248,6 +300,63 @@ def apply_address_distinction(frame):
 
 # ---------------- 流水线结果 ----------------
 
+# 基础数据集输出列（Sheet1/Sheet2；不含 街道，街道仅内部用于排序）
+_BASE_SHEET_COLS_FULL = ['地市', '区县', '街道', C.COL_LOC, C.COL_COMMUNITY, '监测地点',
+                         C.COL_ADDR1, C.COL_ADDR2, C.COL_TIME, C.COL_METHOD, C.COL_VALUE]
+_BASE_OUT_COLS = ['地市', C.COL_LOC, '区县', C.COL_COMMUNITY, '监测地点',
+                  C.COL_ADDR1, C.COL_ADDR2, C.COL_TIME, C.COL_METHOD, C.COL_VALUE]
+
+
+def _compute_first_monitor(source_df):
+    """按 (地市-区/县/市-街道/乡/镇, 社区/村居) 计算每个监测点的“最初监测日期”：
+    取该点全部监测日期序列中，最近一次中断（相邻日期差 > 1 天）之后重新开始的日期；
+    无中断则取最早监测日期。返回 {(loc, comm): date}。"""
+    out = {}
+    df = source_df[[C.COL_LOC, C.COL_COMMUNITY, C.COL_TIME]].copy()
+    df[C.COL_TIME] = pd.to_datetime(df[C.COL_TIME], errors='coerce')
+    df = df.dropna(subset=[C.COL_TIME])
+    df[C.COL_LOC] = df[C.COL_LOC].fillna('').astype(str).str.strip()
+    df[C.COL_COMMUNITY] = df[C.COL_COMMUNITY].fillna('').astype(str).str.strip()
+    for (loc, comm), grp in df.groupby([C.COL_LOC, C.COL_COMMUNITY]):
+        dates = sorted(grp[C.COL_TIME].dt.date.unique())
+        if not dates:
+            continue
+        start = dates[0]
+        for a, b in zip(dates, dates[1:]):
+            if (b - a).days > 1:
+                start = b
+        out[(loc, comm)] = start
+    return out
+
+
+def _build_messy_frames(messy_rows):
+    """把捕获的“乱码”记录（距末例天数>40000 且 距首例天数>40000）整理为 BI/ADI 两个 DataFrame：
+    列 = 基础数据集列 + 最初监测日期、距输入日期天数、_dropped（供浅红标记，内部列）。"""
+    bi_rows, adi_rows = [], []
+    for m in messy_rows:
+        parsed = parse_location(m['loc'])
+        if parsed is None:
+            continue
+        city, district, street = parsed
+        mp = '%s（%s）' % (str(m['comm']).strip(), str(m['type']).strip())
+        rec = {
+            '地市': city, '区县': district, '街道': street,
+            C.COL_LOC: m['loc'], C.COL_COMMUNITY: m['comm'],
+            '监测地点': mp, C.COL_ADDR1: m['addr1'], C.COL_ADDR2: m['addr2'],
+            C.COL_TIME: m['time'], C.COL_METHOD: m['method'], C.COL_VALUE: m['value'],
+            '最初监测日期': m['first_monitor'], '距输入日期天数': m['interval'],
+            '_dropped': m['dropped'],
+        }
+        if m['method'] in C.BI_SSI_METHODS:
+            bi_rows.append(rec)
+        elif m['method'] == C.METHOD_ADI:
+            adi_rows.append(rec)
+    cols = _BASE_SHEET_COLS_FULL + ['最初监测日期', '距输入日期天数', '_dropped']
+    bi = pd.DataFrame(bi_rows, columns=cols) if bi_rows else pd.DataFrame(columns=cols)
+    adi = pd.DataFrame(adi_rows, columns=cols) if adi_rows else pd.DataFrame(columns=cols)
+    return bi, adi
+
+
 class PipelineResult(object):
     def __init__(self):
         self.base = None
@@ -259,6 +368,10 @@ class PipelineResult(object):
         self.exclude_display = None   # 排除字段展示串（Word 注记用）
         self.flight_bi_count = 0      # 飞行监测表整合入 BI 最终表的条数
         self.flight_adi_count = 0     # 飞行监测表整合入 ADI 最终表的条数
+        self.base_bi = None           # 基础数据集（BI 部分）
+        self.base_adi = None          # 基础数据集（ADI 部分）
+        self.messy_bi = None          # 乱码处理（BI）：末例>40000且首例>40000 的记录
+        self.messy_adi = None         # 乱码处理（ADI）
 
 
 # ---------------- 主流程 ----------------
@@ -269,6 +382,8 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     df = source_df.copy()
     del_rows = []
     excluded_cities = set()
+    # 该点最初监测日期映射（用于 P6 乱码规则：末例>40000 且 首例>40000 的记录）
+    first_monitor = _compute_first_monitor(source_df)
 
     def record(idx_list, reason):
         for i in idx_list:
@@ -306,13 +421,44 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
         df = df[~mask_ex]
 
     # ---- P6 距末例天数（保留 <=5 或 >40000；其中 >40000 的记录仅保留 距首例天数 <=5 或 >40000 的，D56） ----
+    # 新增（乱码规则）：距末例天数>40000 且 距首例天数>40000 的记录，按 (地市-区/县/市-街道/乡/镇,
+    # 社区/村居) 确定该点“最初监测日期”（最近一次中断后重新开始的日期），
+    # 计算到输入日期的间隔天数：<=5 纳入、>5 放弃；这些记录另输出至“乱码处理”sheet。
     days = pd.to_numeric(df[C.COL_DAYS], errors='coerce')
-    keep_days = days.notna() & ((days <= C.DAYS_LOW) | (days > C.DAYS_HIGH))
+    keep_days = days.notna() & (days <= C.DAYS_LOW)
+    messy_rows = []          # 乱码记录（末例>40000 且 首例>40000），供 基础数据集 乱码 sheet
     if C.COL_FIRST_DAYS in df.columns:
         first_days = pd.to_numeric(df[C.COL_FIRST_DAYS], errors='coerce')
-        keep_high = first_days.notna() & ((first_days <= C.DAYS_LOW) | (first_days > C.DAYS_HIGH))
-        # 距末例天数 > 40000 的记录：另需 距首例天数 在保留范围（负值/0 视为 <=5）
-        keep_days = keep_days & (~(days > C.DAYS_HIGH) | keep_high)
+        mask_high = days > C.DAYS_HIGH
+        first_le5 = first_days.notna() & (first_days <= C.DAYS_LOW)
+        first_high = first_days.notna() & (first_days > C.DAYS_HIGH)
+        messy_mask = mask_high & first_high              # 末例>40000 且 首例>40000
+        keep_days = keep_days | (mask_high & first_le5)  # 首例<=5 保留
+        messy_interval = pd.Series([None] * len(df), index=df.index, dtype=object)
+        if messy_mask.any():
+            locs = df.loc[messy_mask, C.COL_LOC].fillna('').astype(str).str.strip()
+            comms = df.loc[messy_mask, C.COL_COMMUNITY].fillna('').astype(str).str.strip()
+            starts = [first_monitor.get((l, c)) for l, c in zip(locs, comms)]
+            messy_interval.loc[messy_mask] = [
+                (target_date - st).days if st is not None else None for st in starts]
+        interval_ok = pd.Series([False] * len(df), index=df.index)
+        has_iv = messy_interval.notna()
+        interval_ok[has_iv] = pd.to_numeric(messy_interval[has_iv]) <= C.DAYS_LOW
+        keep_messy = messy_mask & interval_ok
+        keep_days = keep_days | keep_messy
+        # 捕获乱码记录（含被放弃的，供 乱码 sheet；放弃的记浅红）
+        if messy_mask.any():
+            for i in df.index[messy_mask]:
+                r = df.loc[i]
+                messy_rows.append({
+                    'loc': r[C.COL_LOC], 'comm': r[C.COL_COMMUNITY], 'type': r[C.COL_TYPE],
+                    'addr1': r[C.COL_ADDR1], 'addr2': r[C.COL_ADDR2],
+                    'time': r[C.COL_TIME], 'method': r[C.COL_METHOD], 'value': r[C.COL_VALUE],
+                    'first_monitor': first_monitor.get(
+                        (str(r[C.COL_LOC]).strip(), str(r[C.COL_COMMUNITY]).strip())),
+                    'interval': messy_interval.at[i],
+                    'dropped': not bool(interval_ok.at[i]),
+                })
     record(list(df.index[~keep_days]), '距末例天数不在范围内')
     df = df[keep_days]
 
@@ -334,6 +480,11 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     df['街道'] = [p[2] for p in parsed[~mask_parse]]
 
     base = df.copy()      # P10 基础数据集
+
+    # 基础数据集拆分（Sheet1 BI基础数据集 / Sheet2 ADI基础数据集）与乱码处理表
+    base_bi = base[base[C.COL_METHOD].isin(C.BI_SSI_METHODS)][_BASE_SHEET_COLS_FULL].copy()
+    base_adi = base[base[C.COL_METHOD] == C.METHOD_ADI][_BASE_SHEET_COLS_FULL].copy()
+    messy_bi, messy_adi = _build_messy_frames(messy_rows)
 
     # ---- 方法归属：非 BI/SSI/ADI 记入删除说明 ----
     mask_method = ~df[C.COL_METHOD].isin(C.ALL_PROCESSED_METHODS)
@@ -409,6 +560,10 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     res.exclude_display = exclude_display(exclude)
     res.flight_bi_count = flight_bi_count
     res.flight_adi_count = flight_adi_count
+    res.base_bi = base_bi
+    res.base_adi = base_adi
+    res.messy_bi = messy_bi
+    res.messy_adi = messy_adi
     res.calc_sheets = {}
     res.calc_sheets.update(bi_sheets)
     res.calc_sheets.update(adi_sheets)

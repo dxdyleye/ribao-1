@@ -36,11 +36,13 @@ class App(object):
         self.entry_file = ttk.Entry(frm, width=62)
         self.entry_file.grid(row=0, column=1, sticky='we', **pad)
         ttk.Button(frm, text='浏览…', command=self.choose_file).grid(row=0, column=2, **pad)
+        ttk.Label(frm, text='要求：需包含所有监测日期并补充广州市街道数据的总库表',
+                  foreground='gray').grid(row=1, column=1, columnspan=2, sticky='w', padx=8)
 
         # 目标日期
-        ttk.Label(frm, text='目标日期：').grid(row=1, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='目标日期：').grid(row=2, column=0, sticky='w', **pad)
         d = tk.Frame(frm)
-        d.grid(row=1, column=1, sticky='w', **pad)
+        d.grid(row=2, column=1, sticky='w', **pad)
         now = date.today()
         self.var_year = tk.StringVar(value=str(now.year))
         self.var_month = tk.StringVar(value=str(now.month))
@@ -52,61 +54,64 @@ class App(object):
         ttk.Spinbox(d, from_=1, to=31, textvariable=self.var_day, width=4).pack(side='left')
         ttk.Label(d, text='日').pack(side='left')
 
-        # 排除字段（支持多个；“添加排除字段”按钮逐个添加输入框，框间可选“和/或”连接）
-        ttk.Label(frm, text='排除字段（可选）：').grid(row=2, column=0, sticky='nw', **pad)
+        # 排除字段（两列：区/县/市-街道/乡/镇 + 社区/村居；多个字段之间为“或”）
+        ttk.Label(frm, text='排除字段（可选）：').grid(row=3, column=0, sticky='nw', **pad)
         self.excl_frame = ttk.Frame(frm)
-        self.excl_frame.grid(row=2, column=1, columnspan=2, sticky='we', **pad)
+        self.excl_frame.grid(row=3, column=1, columnspan=2, sticky='we', **pad)
         self.excl_rows = []
         bar = ttk.Frame(self.excl_frame)
         bar.pack(side='bottom', fill='x', pady=(3, 0))
-        ttk.Button(bar, text='添加排除字段', command=self._add_exclude_row).pack(side='left')
-        ttk.Label(bar, text='多个字段间可选“和/或”：和=须同时包含前后两个字段才删除，或=包含其一即删除'
-                            '（匹配“地市-区/县/市-街道/乡/镇”与“社区/村居”两列，任一列命中即删除）',
-                  foreground='gray').pack(side='left', padx=(8, 0))
-        self._add_exclude_row(first=True)
+        ttk.Label(bar, text='说明：排除字段应按列名填入，如“罗定市素龙街道”+“平南村委”；'
+                            '字段内两列都填时为“与”（两列均命中才删除），只填一列时按该列匹配；'
+                            '多个排除字段之间为“或”（任一命中即删除）',
+                  foreground='gray').pack(side='left')
+        self._add_exclude_row()
 
         # 飞行监测表（可选，需求一）
-        ttk.Label(frm, text='飞行监测表（可选）：').grid(row=4, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='飞行监测表（可选）：').grid(row=5, column=0, sticky='w', **pad)
         self.entry_flight = ttk.Entry(frm, width=62)
-        self.entry_flight.grid(row=4, column=1, sticky='we', **pad)
-        ttk.Button(frm, text='浏览…', command=self.choose_flight).grid(row=4, column=2, **pad)
+        self.entry_flight.grid(row=5, column=1, sticky='we', **pad)
+        ttk.Button(frm, text='浏览…', command=self.choose_flight).grid(row=5, column=2, **pad)
 
         # 输出目录
-        ttk.Label(frm, text='输出目录：').grid(row=5, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='输出目录：').grid(row=6, column=0, sticky='w', **pad)
         self.entry_out = ttk.Entry(frm, width=62)
-        self.entry_out.grid(row=5, column=1, sticky='we', **pad)
-        ttk.Button(frm, text='选择…', command=self.choose_dir).grid(row=5, column=2, **pad)
+        self.entry_out.grid(row=6, column=1, sticky='we', **pad)
+        ttk.Button(frm, text='选择…', command=self.choose_dir).grid(row=6, column=2, **pad)
 
         # 开始按钮
         self.btn = ttk.Button(frm, text='开始处理', command=self.on_start)
-        self.btn.grid(row=6, column=1, sticky='w', **pad)
+        self.btn.grid(row=7, column=1, sticky='w', **pad)
 
         # 日志区
-        ttk.Label(frm, text='处理日志：').grid(row=7, column=0, sticky='nw', **pad)
+        ttk.Label(frm, text='处理日志：').grid(row=8, column=0, sticky='nw', **pad)
         self.txt = tk.Text(frm, height=18, state='disabled', font=('Consolas', 9))
-        self.txt.grid(row=8, column=0, columnspan=3, sticky='nsew', **pad)
-        frm.rowconfigure(8, weight=1)
+        self.txt.grid(row=9, column=0, columnspan=3, sticky='nsew', **pad)
+        frm.rowconfigure(9, weight=1)
         frm.columnconfigure(1, weight=1)
 
         self.root.after(100, self._poll)
 
-    # ---------------- 排除字段行管理（需求三） ----------------
+    # ---------------- 排除字段行管理（两列：区/县/市-街道/乡/镇 + 社区/村居） ----------------
 
-    def _add_exclude_row(self, first=False):
-        """按一下“添加排除字段”即添加一个排除字段输入框；除第一个外，
-        输入框前带“和/或”下拉（连接前一个字段）。"""
+    def _add_exclude_row(self):
+        """添加一个排除字段行：标题“排除字段N” + 区/县/市-街道/乡/镇输入框 + “+” + 社区/村居输入框 +
+        右侧“+”按钮（添加下一字段）。多个字段之间为“或”关系。"""
+        n = len(self.excl_rows) + 1
         row = ttk.Frame(self.excl_frame)
         row.pack(fill='x', pady=1)
-        connector = None
-        if not first:
-            connector = ttk.Combobox(row, values=('和', '或'), width=3, state='readonly')
-            connector.set('或')
-            connector.pack(side='left', padx=(0, 4))
-        entry = ttk.Entry(row, width=50)
-        entry.pack(side='left', fill='x', expand=True)
+        lbl = ttk.Label(row, text='排除字段%d' % n, width=10)
+        lbl.pack(side='left')
+        entry_loc = ttk.Entry(row, width=22)
+        entry_loc.pack(side='left')
+        ttk.Label(row, text='+', width=2).pack(side='left')
+        entry_comm = ttk.Entry(row, width=22)
+        entry_comm.pack(side='left', padx=(0, 4))
+        ttk.Button(row, text='+', width=3, command=self._add_exclude_row).pack(side='left')
         ttk.Button(row, text='删除', width=4,
                    command=lambda r=row: self._remove_exclude_row(r)).pack(side='left', padx=(4, 0))
-        self.excl_rows.append({'frame': row, 'entry': entry, 'connector': connector})
+        self.excl_rows.append({'frame': row, 'label': lbl,
+                               'entry_loc': entry_loc, 'entry_comm': entry_comm})
 
     def _remove_exclude_row(self, frame):
         idx = next((i for i, r in enumerate(self.excl_rows) if r['frame'] is frame), None)
@@ -114,10 +119,9 @@ class App(object):
             return
         frame.destroy()
         del self.excl_rows[idx]
-        # 若删掉的是第一行，新的第一行不再需要“和/或”连接词
-        if self.excl_rows and self.excl_rows[0]['connector'] is not None:
-            self.excl_rows[0]['connector'].destroy()
-            self.excl_rows[0]['connector'] = None
+        # 重新编号 排除字段1、2、…
+        for i, r in enumerate(self.excl_rows, 1):
+            r['label'].configure(text='排除字段%d' % i)
 
     # ---------------- 界面动作 ----------------
 
@@ -226,13 +230,13 @@ class App(object):
         except (ValueError, TypeError) as e:
             messagebox.showerror('日期错误', '日期不合法：%s' % e)
             return
-        ex_terms = []
+        ex_fields = []
         for r in self.excl_rows:
-            ex_field = r['entry'].get().strip()
-            if ex_field:
-                conn = r['connector'].get() if r['connector'] is not None else None
-                ex_terms.append({'field': ex_field, 'connector': conn})
-        exclude = ex_terms if ex_terms else None
+            loc_f = r['entry_loc'].get().strip()
+            comm_f = r['entry_comm'].get().strip()
+            if loc_f or comm_f:
+                ex_fields.append({'loc': loc_f, 'comm': comm_f})
+        exclude = ex_fields if ex_fields else None
         fp = self.entry_flight.get().strip() or None
         if fp and not os.path.isfile(fp):
             messagebox.showerror('输入错误', '飞行监测表文件不存在。')
