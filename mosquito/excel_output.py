@@ -20,7 +20,7 @@ from .pipeline import round1
 import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
-                  '_dropped')
+                  '_dropped', '_社区')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -263,8 +263,14 @@ def write_base_workbook(path, base_bi, base_adi, messy_bi, messy_adi):
 
 
 
+def _cjk_count(s):
+    """统计字符串中的汉字个数（供“社区村居字段过长-供审核”判定 ≥6 个汉字）"""
+    return sum(1 for ch in str(s) if '\u4e00' <= ch <= '\u9fff')
+
+
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
-    """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 / Sheet4 删除数据情况说明
+    """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 /
+    Sheet4 社区村居字段过长-供审核 / Sheet5 删除数据情况说明
 
     需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
     整合表缺失项（'/'）背景同安全绿色（92D050）。
@@ -274,6 +280,8 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     bi = _display_frame(bi_final, 'BI*')
     adi = _display_frame(adi_final, 'ADI').rename(columns={'ADI': 'ADI*'})   # 指标列名用 ADI*
     integrated = _build_integrated_frame(bi, adi)
+    # 社区村居字段过长-供审核：整合表中 基础数据集“社区/村居”≥6 个汉字的记录（列同整合表）
+    long_comm = integrated[integrated['_社区'].map(_cjk_count) >= 6].copy()
     with pd_writer(path) as writer:
         _write_sheet(writer, 'BI表', bi, risk_src={'BI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
@@ -282,16 +290,26 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
         _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
                      font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
+        _write_sheet(writer, '社区村居字段过长-供审核', long_comm,
+                     risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
+                     drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 
 def _build_integrated_frame(bi, adi):
     """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
     缺失项数值写 '/'；输出列 = 地市/区县/街道/监测地点/ADI*/BI*（ADI 指标列名用 ADI*；
-    风险水平列仅内部用于着色）。缺失项（'/'）内部风险按“安全”处理 → 背景同为安全绿色（92D050）。"""
+    风险水平列仅内部用于着色）。缺失项（'/'）内部风险按“安全”处理 → 背景同为安全绿色（92D050）。
+    内部列 _社区（基础数据集社区/村居）随行保留，供“社区村居字段过长-供审核”表使用。"""
     bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
     adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
+    if '_社区_x' in m.columns:                       # 合并产生的双侧社区列取并
+        m['_社区'] = m['_社区_x'].fillna(m['_社区_y'])
+        m = m.drop(columns=['_社区_x', '_社区_y'])
+    elif '_社区' not in m.columns:
+        m['_社区'] = ''
     for col in ('ADI*', 'BI*'):
         if col not in m.columns:
             m[col] = '/'
@@ -308,12 +326,13 @@ def _build_integrated_frame(bi, adi):
     m['_k3'] = m['监测地点'].map(_pinyin_key)
     m = m.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
-    return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险']]
+    return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险', '_社区']]
 
 
 def _display_frame(final, value_col):
     """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
-    排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 社区/村居 → 防控区类型（核心区→警戒区）→ 监测地点升序（拼音）"""
+    排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 社区/村居 → 防控区类型（核心区→警戒区）→ 监测地点升序（拼音）
+    内部列 _社区（基础数据集社区/村居）随行保留。"""
     df = final.copy()
     df['区县'] = df['区县'].map(district_display_sheet)
     df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
@@ -324,7 +343,7 @@ def _display_frame(final, value_col):
     df['_k3'] = df['监测地点'].map(_pinyin_key)
     df = df.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
-    return df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*']]
+    return df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*', '_社区']]
 
 
 def pd_writer(path):
