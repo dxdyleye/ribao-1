@@ -61,10 +61,10 @@ class App(object):
         self.excl_rows = []
         bar = ttk.Frame(self.excl_frame)
         bar.pack(side='bottom', fill='x', pady=(3, 0))
-        ttk.Label(bar, text='说明：排除字段应按列名填入，如“罗定市素龙街道”+“平南村委”；'
+        ttk.Label(bar, text='说明：排除字段应按列名填入，如“罗定市素龙街道”+“平南村委”或“荔湾区”+“”；'
                             '字段内两列都填时为“与”（两列均命中才删除），只填一列时按该列匹配；'
                             '多个排除字段之间为“或”（任一命中即删除）',
-                  foreground='gray').pack(side='left')
+                  foreground='gray', wraplength=640).pack(side='left')
         self._add_exclude_row()
 
         # 飞行监测表（可选，需求一）

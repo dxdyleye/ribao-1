@@ -308,16 +308,19 @@ _BASE_OUT_COLS = ['地市', C.COL_LOC, '区县', C.COL_COMMUNITY, '监测地点'
 
 
 def _compute_first_monitor(source_df):
-    """按 (地市-区/县/市-街道/乡/镇, 社区/村居) 计算每个监测点的“最初监测日期”：
-    取该点全部监测日期序列中，最近一次中断（相邻日期差 > 1 天）之后重新开始的日期；
-    无中断则取最早监测日期。返回 {(loc, comm): date}。"""
+    """按 (地市-区/县/市-街道/乡/镇, 社区/村居, 监测方法) 计算每个监测点的“最初监测日期”：
+    从 P1 处理前的数据中，取该点**对应监测方法**且**监测指标值不为空**的记录，
+    在其监测日期序列中，取最近一次中断（相邻日期差 > 1 天）之后重新开始的日期；
+    无中断则取最早监测日期。返回 {(loc, comm, method): date}。"""
     out = {}
-    df = source_df[[C.COL_LOC, C.COL_COMMUNITY, C.COL_TIME]].copy()
+    df = source_df[[C.COL_LOC, C.COL_COMMUNITY, C.COL_METHOD, C.COL_VALUE, C.COL_TIME]].copy()
     df[C.COL_TIME] = pd.to_datetime(df[C.COL_TIME], errors='coerce')
-    df = df.dropna(subset=[C.COL_TIME])
+    df[C.COL_VALUE] = pd.to_numeric(df[C.COL_VALUE], errors='coerce')
+    df = df.dropna(subset=[C.COL_TIME, C.COL_VALUE])     # 监测指标值不为空
     df[C.COL_LOC] = df[C.COL_LOC].fillna('').astype(str).str.strip()
     df[C.COL_COMMUNITY] = df[C.COL_COMMUNITY].fillna('').astype(str).str.strip()
-    for (loc, comm), grp in df.groupby([C.COL_LOC, C.COL_COMMUNITY]):
+    df[C.COL_METHOD] = df[C.COL_METHOD].fillna('').astype(str).str.strip()
+    for (loc, comm, method), grp in df.groupby([C.COL_LOC, C.COL_COMMUNITY, C.COL_METHOD]):
         dates = sorted(grp[C.COL_TIME].dt.date.unique())
         if not dates:
             continue
@@ -325,7 +328,7 @@ def _compute_first_monitor(source_df):
         for a, b in zip(dates, dates[1:]):
             if (b - a).days > 1:
                 start = b
-        out[(loc, comm)] = start
+        out[(loc, comm, method)] = start
     return out
 
 
@@ -438,7 +441,8 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
         if messy_mask.any():
             locs = df.loc[messy_mask, C.COL_LOC].fillna('').astype(str).str.strip()
             comms = df.loc[messy_mask, C.COL_COMMUNITY].fillna('').astype(str).str.strip()
-            starts = [first_monitor.get((l, c)) for l, c in zip(locs, comms)]
+            methods = df.loc[messy_mask, C.COL_METHOD].fillna('').astype(str).str.strip()
+            starts = [first_monitor.get((l, c, m)) for l, c, m in zip(locs, comms, methods)]
             messy_interval.loc[messy_mask] = [
                 (target_date - st).days if st is not None else None for st in starts]
         interval_ok = pd.Series([False] * len(df), index=df.index)
@@ -455,7 +459,8 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
                     'addr1': r[C.COL_ADDR1], 'addr2': r[C.COL_ADDR2],
                     'time': r[C.COL_TIME], 'method': r[C.COL_METHOD], 'value': r[C.COL_VALUE],
                     'first_monitor': first_monitor.get(
-                        (str(r[C.COL_LOC]).strip(), str(r[C.COL_COMMUNITY]).strip())),
+                        (str(r[C.COL_LOC]).strip(), str(r[C.COL_COMMUNITY]).strip(),
+                         str(r[C.COL_METHOD]).strip())),
                     'interval': messy_interval.at[i],
                     'dropped': not bool(interval_ok.at[i]),
                 })
