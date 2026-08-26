@@ -65,6 +65,13 @@ class App(object):
                             '字段内两列都填时为“与”（两列均命中才删除），只填一列时按该列匹配；'
                             '多个排除字段之间为“或”（任一命中即删除）',
                   foreground='gray', wraplength=640).pack(side='left')
+        # 列说明行（位于输入框上方，输入框整体下移一行）
+        hdr = ttk.Frame(self.excl_frame)
+        hdr.pack(fill='x', pady=(0, 2))
+        ttk.Label(hdr, text='', width=10).pack(side='left')
+        ttk.Label(hdr, text='地市-区县-街道', width=22).pack(side='left')
+        ttk.Label(hdr, text='', width=2).pack(side='left')
+        ttk.Label(hdr, text='社区村居', width=22).pack(side='left')
         self._add_exclude_row()
 
         # 飞行监测表（可选，需求一）
