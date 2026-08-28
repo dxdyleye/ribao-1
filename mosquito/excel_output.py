@@ -106,10 +106,11 @@ def _merge_same_values(ws, col_idx):
 
 def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                  drop_cols=None, merge_cols=None, center=False, header_rename=None, font_size=None,
-                 borders=False, header_bold=False, italic_bold_col=None):
+                 borders=False, header_bold=False, italic_bold_col=None, flag_cols=None):
     """写入一个 Sheet。
 
     - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED/FILL_LIGHT_RED 填充（计算过程表标记用）；
+    - flag_cols：与 flag_col 配合，仅给这些输出列填充标记色（不提供则整行填充）；
     - risk_cols：按风险等级只给这些列着色（风险水平文字列，如“安全/低风险/…”）；
     - risk_src：{输出列: 风险水平文字列}，按风险等级给输出列着色（需求四：颜色套用到 BI*/ADI* 列，
       风险文字列本身不输出）；
@@ -190,8 +191,13 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                 if color:
                     ws.cell(row=r_idx, column=wcol).fill = PatternFill('solid', fgColor=color)
 
-    # 整行标记填充（在风险着色之后执行，避免被 BI*/ADI* 数值列的风险色覆盖）
+    # 标记填充（在风险着色之后执行，避免被 BI*/ADI* 数值列的风险色覆盖）
     if flag_col:
+        out_cols = list(out.columns)
+        if flag_cols:
+            fill_cols = [i + 1 for i, c in enumerate(out_cols) if c in flag_cols]
+        else:
+            fill_cols = list(range(1, ncols + 1))
         for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
             if flag_col in df.columns and bool(row.get(flag_col)):
                 if flag_col.startswith('_deleted'):
@@ -203,7 +209,7 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                 else:
                     color = C.FILL_YELLOW
                 fill = PatternFill('solid', fgColor=color)
-                for c_idx in range(1, ncols + 1):
+                for c_idx in fill_cols:
                     ws.cell(row=r_idx, column=c_idx).fill = fill
 
     # 纵向合并连续相同单元格
@@ -295,10 +301,10 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
 
     需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
     整合表缺失项（'/'）背景同安全绿色（92D050）；飞行监测数据在整合表中斜体加粗；
-    整合表中出现 "nan" 字样的行整行背景标红（FF0000）。
+    整合表中出现 "nan" 字样的行，其 区县/街道/监测地点 三列背景标红（FF0000），其余列保持原格式。
     Sheet5 地址-供审核：第一部分 地市/区县/社区村居空白条目（审核原因“地址列存在空白”），
-    空一行后第二部分 经过最小地址区分处理的行（整行浅红 FFC7CE，审核原因“经过最小地址区分，需要审核”），
-    列 = 整合表列 + 监测地点（地图）/（手填）+ 审核原因。
+    空一行后第二部分 经过最小地址区分处理的行（区县/街道/监测地点 三列浅红 FFC7CE，
+    审核原因“经过最小地址区分，需要审核”），列 = 整合表列 + 监测地点（地图）/（手填）+ 审核原因。
     字号：整合表小四(12)，其余 sheet 14；整合表有内容的单元格显示全部框线；
     字体：中文 仿宋_GB2312、英文 Times New Roman。
     """
@@ -336,7 +342,7 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
         _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
                      font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, italic_bold_col='_flight',
-                     flag_col='_nan')
+                     flag_col='_nan', flag_cols=['区县', '街道', '监测地点'])
         _write_sheet(writer, '社区村居字段过长-供审核', long_comm,
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
@@ -344,7 +350,8 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
         _write_sheet(writer, '地址-供审核', audit,
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
-                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, flag_col='_audit_red')
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, flag_col='_audit_red',
+                     flag_cols=['区县', '街道', '监测地点'])
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 
