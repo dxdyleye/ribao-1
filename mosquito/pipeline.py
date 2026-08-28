@@ -672,7 +672,9 @@ def _bi_ssi_pipeline(bi_ssi, del_rows):
 
     # ---- Sheet6「最终表(BI)」 ----
     bi_final = kept[['地市', '区县', '街道', '监测地点', C.COL_VALUE, C.COL_TYPE]].copy()
-    bi_final['_社区'] = kept[C.COL_COMMUNITY]      # 内部列：社区/村居（供“字段过长-供审核”表）
+    bi_final['_社区'] = kept[C.COL_COMMUNITY]      # 内部列：社区/村居（供审核表）
+    bi_final['_地址1'] = kept[C.COL_ADDR1]         # 内部列：监测地址（地图定位版）
+    bi_final['_地址2'] = kept[C.COL_ADDR2]         # 内部列：监测地址（手填）
     bi_final['BI*'] = bi_final[C.COL_VALUE]
     bi_final['风险水平*'] = bi_final[C.COL_VALUE].map(C.grade_bi)
     bi_final['_city_idx'] = bi_final['地市'].map(C.CITY_INDEX)
@@ -704,7 +706,9 @@ def _adi_pipeline(adi_raw, del_rows):
 
     # Sheet3「最终表(ADI)」——指标列名用 ADI*（与金标准/一览表一致）
     adi_final = kept[['地市', '区县', '街道', '监测地点', C.COL_VALUE, C.COL_TYPE]].copy()
-    adi_final['_社区'] = kept[C.COL_COMMUNITY]      # 内部列：社区/村居（供“字段过长-供审核”表）
+    adi_final['_社区'] = kept[C.COL_COMMUNITY]      # 内部列：社区/村居（供审核表）
+    adi_final['_地址1'] = kept[C.COL_ADDR1]         # 内部列：监测地址（地图定位版）
+    adi_final['_地址2'] = kept[C.COL_ADDR2]         # 内部列：监测地址（手填）
     adi_final['ADI'] = adi_final[C.COL_VALUE]
     adi_final['风险水平*'] = adi_final[C.COL_VALUE].map(C.grade_adi)
     adi_final['_city_idx'] = adi_final['地市'].map(C.CITY_INDEX)
@@ -775,6 +779,8 @@ def process_flight_monitoring(flight_df, target_date):
             return None
         e = s[['地市', '区县', '街道', '监测地点', '_val', C.COL_TYPE]].copy()
         e['_社区'] = s[C.COL_COMMUNITY].values      # 内部列：社区/村居
+        e['_地址1'] = s[C.COL_ADDR1].values         # 内部列：监测地址（地图定位版）
+        e['_地址2'] = s[C.COL_ADDR2].values         # 内部列：监测地址（手填）
         e[C.COL_VALUE] = e['_val']
         e[value_col] = e['_val']
         e['风险水平*'] = e['_val'].map(grade)

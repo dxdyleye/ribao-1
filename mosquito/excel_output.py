@@ -20,7 +20,7 @@ from .pipeline import round1
 import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
-                  '_dropped', '_社区')
+                  '_dropped', '_社区', '_地址1', '_地址2', '_flight')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -66,13 +66,15 @@ def _community_sort_key(mp):
     return _pinyin_key(s[:i] if i >= 0 else s)
 
 
-def _cell_font(size, text, bold=False):
+def _cell_font(size, text, bold=False, italic=False):
     """含中文 -> 仿宋_GB2312；纯英文/数字 -> Times New Roman（xlsx 每格单一字体名）"""
     f = Font(name=C.FONT_CN if _has_cjk(text) else C.FONT_EN)
     if size:
         f.size = size
     if bold:
         f.bold = True
+    if italic:
+        f.italic = True
     return f
 
 
@@ -102,7 +104,7 @@ def _merge_same_values(ws, col_idx):
 
 def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                  drop_cols=None, merge_cols=None, center=False, header_rename=None, font_size=None,
-                 borders=False, header_bold=False):
+                 borders=False, header_bold=False, italic_bold_col=None):
     """写入一个 Sheet。
 
     - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED 填充（计算过程表标记用）；
@@ -115,7 +117,8 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
     - header_rename：{df列名: 新表头}，写表头后改名（用于整合表两个“风险水平*”）；
     - font_size：单元格字号（None 用默认）；所有单元格中文字体 仿宋_GB2312、英文 Times New Roman；
     - borders：为有内容的单元格（含表头）显示全部框线（细线）；
-    - header_bold：标题行（表头）加粗。
+    - header_bold：标题行（表头）加粗；
+    - italic_bold_col：该真值列标记的行整行斜体加粗（飞行监测数据用）。
     """
     out = _strip_internal(df)
     if drop_cols:
@@ -155,6 +158,14 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
         for c in range(1, ncols + 1):
             cell = ws.cell(row=1, column=c)
             cell.font = _cell_font(font_size, cell.value, bold=True)
+
+    # 标记行斜体加粗（飞行监测数据）
+    if italic_bold_col:
+        for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
+            if italic_bold_col in df.columns and bool(row.get(italic_bold_col)):
+                for c_idx in range(1, ncols + 1):
+                    cell = ws.cell(row=r_idx, column=c_idx)
+                    cell.font = _cell_font(font_size, cell.value, bold=True, italic=True)
 
     # 填充色
     if flag_col:
@@ -268,12 +279,17 @@ def _cjk_count(s):
     return sum(1 for ch in str(s) if '\u4e00' <= ch <= '\u9fff')
 
 
+def _is_blank(v):
+    """判断单元格值是否空白（None/NaN/空串/纯空白）"""
+    return v is None or (isinstance(v, float) and v != v) or str(v).strip() == ''
+
+
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 /
-    Sheet4 社区村居字段过长-供审核 / Sheet5 删除数据情况说明
+    Sheet4 社区村居字段过长-供审核 / Sheet5 列名空白-供审核 / Sheet6 删除数据情况说明
 
     需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
-    整合表缺失项（'/'）背景同安全绿色（92D050）。
+    整合表缺失项（'/'）背景同安全绿色（92D050）；飞行监测数据在整合表中斜体加粗。
     字号：整合表小四(12)，其余 sheet 14；整合表有内容的单元格显示全部框线；
     字体：中文 仿宋_GB2312、英文 Times New Roman。
     """
@@ -282,6 +298,12 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     integrated = _build_integrated_frame(bi, adi)
     # 社区村居字段过长-供审核：整合表中 基础数据集“社区/村居”≥6 个汉字的记录（列同整合表）
     long_comm = integrated[integrated['_社区'].map(_cjk_count) >= 6].copy()
+    # 列名空白-供审核：整合表中“地市/区县/社区村居”空白的条目（整合表列 + 监测地点（地图）/（手填））
+    blank_audit = integrated[
+        integrated['地市'].map(_is_blank) | integrated['区县'].map(_is_blank)
+        | integrated['_社区'].map(_is_blank)
+    ].copy()
+    blank_audit = blank_audit.rename(columns={'_地址1': '监测地点（地图）', '_地址2': '监测地点（手填）'})
     with pd_writer(path) as writer:
         _write_sheet(writer, 'BI表', bi, risk_src={'BI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
@@ -289,8 +311,12 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
         _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
-                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, italic_bold_col='_flight')
         _write_sheet(writer, '社区村居字段过长-供审核', long_comm,
+                     risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
+                     drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
+        _write_sheet(writer, '列名空白-供审核', blank_audit,
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
                      font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
@@ -301,15 +327,19 @@ def _build_integrated_frame(bi, adi):
     """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
     缺失项数值写 '/'；输出列 = 地市/区县/街道/监测地点/ADI*/BI*（ADI 指标列名用 ADI*；
     风险水平列仅内部用于着色）。缺失项（'/'）内部风险按“安全”处理 → 背景同为安全绿色（92D050）。
-    内部列 _社区（基础数据集社区/村居）随行保留，供“社区村居字段过长-供审核”表使用。"""
+    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）、_flight（飞行监测标记）随行保留。"""
     bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
     adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
-    if '_社区_x' in m.columns:                       # 合并产生的双侧社区列取并
-        m['_社区'] = m['_社区_x'].fillna(m['_社区_y'])
-        m = m.drop(columns=['_社区_x', '_社区_y'])
-    elif '_社区' not in m.columns:
-        m['_社区'] = ''
+    for col, left, right in (('_社区', '_社区_x', '_社区_y'),
+                             ('_地址1', '_地址1_x', '_地址1_y'),
+                             ('_地址2', '_地址2_x', '_地址2_y')):
+        if left in m.columns:                        # 合并产生的双侧列取并
+            m[col] = m[left].fillna(m[right])
+            m = m.drop(columns=[left, right])
+        elif col not in m.columns:
+            m[col] = ''
+    m['_flight'] = m['监测地点'].astype(str).str.contains('，飞行监测')   # 飞行监测标记
     for col in ('ADI*', 'BI*'):
         if col not in m.columns:
             m[col] = '/'
@@ -326,13 +356,14 @@ def _build_integrated_frame(bi, adi):
     m['_k3'] = m['监测地点'].map(_pinyin_key)
     m = m.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
-    return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险', '_社区']]
+    return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险',
+              '_社区', '_地址1', '_地址2', '_flight']]
 
 
 def _display_frame(final, value_col):
     """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
     排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 社区/村居 → 防控区类型（核心区→警戒区）→ 监测地点升序（拼音）
-    内部列 _社区（基础数据集社区/村居）随行保留。"""
+    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）随行保留。"""
     df = final.copy()
     df['区县'] = df['区县'].map(district_display_sheet)
     df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
@@ -343,7 +374,8 @@ def _display_frame(final, value_col):
     df['_k3'] = df['监测地点'].map(_pinyin_key)
     df = df.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
-    return df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*', '_社区']]
+    return df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*',
+               '_社区', '_地址1', '_地址2']]
 
 
 def pd_writer(path):
