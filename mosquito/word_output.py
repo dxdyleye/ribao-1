@@ -14,6 +14,7 @@ from .pipeline import round1
 
 _JUSTIFY = WD_ALIGN_PARAGRAPH.JUSTIFY
 _CENTER = WD_ALIGN_PARAGRAPH.CENTER
+_NAN_TEXT = 'nan'
 
 
 def _set_run(r, east, size, bold=None):
@@ -25,7 +26,20 @@ def _set_run(r, east, size, bold=None):
         r.font.bold = bold
 
 
+def _shade_run(r, fill):
+    """给 run 设置文字背景色（w:shd，填充色 fill 如 'FF0000'）"""
+    rPr = r._element.get_or_add_rPr()
+    shd = rPr.find(qn('w:shd'))
+    if shd is None:
+        shd = rPr.makeelement(qn('w:shd'), {})
+        rPr.append(shd)
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:color'), 'auto')
+    shd.set(qn('w:fill'), fill)
+
+
 def _add_par(doc, text, size, align=None, indent_chars=0, line_pt=None, bold=None, keep_next=False):
+    """添加段落；文本中出现 "nan" 字样时，对该文字单独设置红色背景（其余文字正常）。"""
     p = doc.add_paragraph()
     pf = p.paragraph_format
     if align is not None:
@@ -40,8 +54,15 @@ def _add_par(doc, text, size, align=None, indent_chars=0, line_pt=None, bold=Non
         ind.set(qn('w:firstLineChars'), str(indent_chars * 100))
         ind.set(qn('w:firstLine'), str(int(indent_chars * size * 20)))
     if text:
-        r = p.add_run(text)
-        _set_run(r, C.FONT_CN, size, bold)
+        parts = text.split(_NAN_TEXT)
+        for i, part in enumerate(parts):
+            if i > 0:                          # 每段 "nan" 前的分隔点 → 写入红色 "nan"
+                r = p.add_run(_NAN_TEXT)
+                _set_run(r, C.FONT_EN, size, bold)
+                _shade_run(r, 'FF0000')
+            if part:
+                r = p.add_run(part)
+                _set_run(r, C.FONT_CN, size, bold)
     return p
 
 

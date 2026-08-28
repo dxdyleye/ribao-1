@@ -675,6 +675,7 @@ def _bi_ssi_pipeline(bi_ssi, del_rows):
     bi_final['_社区'] = kept[C.COL_COMMUNITY]      # 内部列：社区/村居（供审核表）
     bi_final['_地址1'] = kept[C.COL_ADDR1]         # 内部列：监测地址（地图定位版）
     bi_final['_地址2'] = kept[C.COL_ADDR2]         # 内部列：监测地址（手填）
+    bi_final['_modified'] = kept['_modified']      # 内部列：是否经过最小地址区分处理（供审核表）
     bi_final['BI*'] = bi_final[C.COL_VALUE]
     bi_final['风险水平*'] = bi_final[C.COL_VALUE].map(C.grade_bi)
     bi_final['_city_idx'] = bi_final['地市'].map(C.CITY_INDEX)
@@ -709,6 +710,7 @@ def _adi_pipeline(adi_raw, del_rows):
     adi_final['_社区'] = kept[C.COL_COMMUNITY]      # 内部列：社区/村居（供审核表）
     adi_final['_地址1'] = kept[C.COL_ADDR1]         # 内部列：监测地址（地图定位版）
     adi_final['_地址2'] = kept[C.COL_ADDR2]         # 内部列：监测地址（手填）
+    adi_final['_modified'] = kept['_modified']      # 内部列：是否经过最小地址区分处理（供审核表）
     adi_final['ADI'] = adi_final[C.COL_VALUE]
     adi_final['风险水平*'] = adi_final[C.COL_VALUE].map(C.grade_adi)
     adi_final['_city_idx'] = adi_final['地市'].map(C.CITY_INDEX)
@@ -781,6 +783,7 @@ def process_flight_monitoring(flight_df, target_date):
         e['_社区'] = s[C.COL_COMMUNITY].values      # 内部列：社区/村居
         e['_地址1'] = s[C.COL_ADDR1].values         # 内部列：监测地址（地图定位版）
         e['_地址2'] = s[C.COL_ADDR2].values         # 内部列：监测地址（手填）
+        e['_modified'] = False                      # 飞行监测不经过最小地址区分处理
         e[C.COL_VALUE] = e['_val']
         e[value_col] = e['_val']
         e['风险水平*'] = e['_val'].map(grade)

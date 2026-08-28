@@ -13,6 +13,8 @@
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+import pandas as pd
+
 from . import config as C
 from .parser import district_display_sheet
 from .pipeline import round1
@@ -20,7 +22,7 @@ from .pipeline import round1
 import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
-                  '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan')
+                  '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan', '_audit_red')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -167,19 +169,6 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                     cell = ws.cell(row=r_idx, column=c_idx)
                     cell.font = _cell_font(font_size, cell.value, bold=True, italic=True)
 
-    # 填充色
-    if flag_col:
-        for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
-            if flag_col in df.columns and bool(row.get(flag_col)):
-                if flag_col.startswith('_deleted'):
-                    color = C.FILL_RED
-                elif flag_col == '_dropped':
-                    color = C.FILL_LIGHT_RED
-                else:
-                    color = C.FILL_YELLOW
-                fill = PatternFill('solid', fgColor=color)
-                for c_idx in range(1, ncols + 1):
-                    ws.cell(row=r_idx, column=c_idx).fill = fill
     if risk_cols:
         for df_col in risk_cols:
             if df_col not in list(out.columns):
@@ -201,20 +190,28 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                 if color:
                     ws.cell(row=r_idx, column=wcol).fill = PatternFill('solid', fgColor=color)
 
+    # 整行标记填充（在风险着色之后执行，避免被 BI*/ADI* 数值列的风险色覆盖）
+    if flag_col:
+        for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
+            if flag_col in df.columns and bool(row.get(flag_col)):
+                if flag_col.startswith('_deleted'):
+                    color = C.FILL_RED
+                elif flag_col in ('_dropped', '_audit_red'):
+                    color = C.FILL_LIGHT_RED
+                elif flag_col == '_nan':
+                    color = C.FILL_RED
+                else:
+                    color = C.FILL_YELLOW
+                fill = PatternFill('solid', fgColor=color)
+                for c_idx in range(1, ncols + 1):
+                    ws.cell(row=r_idx, column=c_idx).fill = fill
+
     # 纵向合并连续相同单元格
     if merge_cols:
         for col_name in merge_cols:
             col_idx = header.get(col_name)
             if col_idx:
                 _merge_same_values(ws, col_idx)
-
-    # 出现 "nan" 字样的行：整行红色背景（需在风险着色之后，避免被覆盖）
-    if flag_col == '_nan':
-        for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
-            if flag_col in df.columns and bool(row.get(flag_col)):
-                fill = PatternFill('solid', fgColor=C.FILL_RED)
-                for c_idx in range(1, ncols + 1):
-                    ws.cell(row=r_idx, column=c_idx).fill = fill
 
     # 有内容的单元格（含表头）显示全部框线（细线）
     if borders:
@@ -294,10 +291,14 @@ def _is_blank(v):
 
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 /
-    Sheet4 社区村居字段过长-供审核 / Sheet5 列名空白-供审核 / Sheet6 删除数据情况说明
+    Sheet4 社区村居字段过长-供审核 / Sheet5 地址-供审核 / Sheet6 删除数据情况说明
 
     需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
-    整合表缺失项（'/'）背景同安全绿色（92D050）；飞行监测数据在整合表中斜体加粗。
+    整合表缺失项（'/'）背景同安全绿色（92D050）；飞行监测数据在整合表中斜体加粗；
+    整合表中出现 "nan" 字样的行整行背景标红（FF0000）。
+    Sheet5 地址-供审核：第一部分 地市/区县/社区村居空白条目（审核原因“地址列存在空白”），
+    空一行后第二部分 经过最小地址区分处理的行（整行浅红 FFC7CE，审核原因“经过最小地址区分，需要审核”），
+    列 = 整合表列 + 监测地点（地图）/（手填）+ 审核原因。
     字号：整合表小四(12)，其余 sheet 14；整合表有内容的单元格显示全部框线；
     字体：中文 仿宋_GB2312、英文 Times New Roman。
     """
@@ -306,12 +307,27 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     integrated = _build_integrated_frame(bi, adi)
     # 社区村居字段过长-供审核：整合表中 基础数据集“社区/村居”≥6 个汉字的记录（列同整合表）
     long_comm = integrated[integrated['_社区'].map(_cjk_count) >= 6].copy()
-    # 列名空白-供审核：整合表中“地市/区县/社区村居”空白的条目（整合表列 + 监测地点（地图）/（手填））
-    blank_audit = integrated[
-        integrated['地市'].map(_is_blank) | integrated['区县'].map(_is_blank)
-        | integrated['_社区'].map(_is_blank)
-    ].copy()
+    # 地址-供审核（原「列名空白-供审核」）：两部分数据，中间空一行。
+    #   第一部分：整合表中“地市/区县/社区村居”空白的条目，审核原因 = “地址列存在空白”；
+    #   第二部分：整合表中经过最小地址区分处理的行（_modified），整行浅红，审核原因 = “经过最小地址区分，需要审核”。
+    #   列 = 整合表列 + 监测地点（地图）/（手填）+ 审核原因
+    blank_mask = (integrated['地市'].map(_is_blank) | integrated['区县'].map(_is_blank)
+                  | integrated['_社区'].map(_is_blank))
+    addr_mask = integrated['_modified'] == True
+    blank_audit = integrated[blank_mask].copy()
+    blank_audit['审核原因'] = '地址列存在空白'
     blank_audit = blank_audit.rename(columns={'_地址1': '监测地点（地图）', '_地址2': '监测地点（手填）'})
+    blank_audit['_audit_red'] = False
+    addr_audit = integrated[addr_mask].copy()
+    addr_audit['审核原因'] = '经过最小地址区分，需要审核'
+    addr_audit = addr_audit.rename(columns={'_地址1': '监测地点（地图）', '_地址2': '监测地点（手填）'})
+    addr_audit['_audit_red'] = True
+    parts = [blank_audit]
+    if not blank_audit.empty and not addr_audit.empty:
+        parts.append(pd.DataFrame([{c: '' for c in blank_audit.columns}]))   # 空一行分隔
+    if not addr_audit.empty:
+        parts.append(addr_audit)
+    audit = pd.concat(parts, ignore_index=True) if parts else blank_audit
     with pd_writer(path) as writer:
         _write_sheet(writer, 'BI表', bi, risk_src={'BI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
@@ -325,10 +341,10 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
                      font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
-        _write_sheet(writer, '列名空白-供审核', blank_audit,
+        _write_sheet(writer, '地址-供审核', audit,
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
-                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, flag_col='_audit_red')
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 
@@ -348,6 +364,12 @@ def _build_integrated_frame(bi, adi):
             m = m.drop(columns=[left, right])
         elif col not in m.columns:
             m[col] = ''
+    # _modified（最小地址区分标记）：BI 或 ADI 任一经过最小地址区分处理即为 True
+    if '_modified_x' in m.columns:
+        m['_modified'] = m['_modified_x'].fillna(False) | m['_modified_y'].fillna(False)
+        m = m.drop(columns=['_modified_x', '_modified_y'])
+    elif '_modified' not in m.columns:
+        m['_modified'] = False
     m['_flight'] = m['监测地点'].astype(str).str.contains('，飞行监测')   # 飞行监测标记
     # 出现 "nan" 字样的行：整合表可见列（地市/区县/街道/监测地点）字面含 'nan'，
     # 如 源数据社区缺失时 监测地点 "nan（核心区）" 之类
@@ -372,13 +394,13 @@ def _build_integrated_frame(bi, adi):
     m = m.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
     return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险',
-              '_社区', '_地址1', '_地址2', '_flight', '_nan']]
+              '_社区', '_地址1', '_地址2', '_flight', '_nan', '_modified']]
 
 
 def _display_frame(final, value_col):
     """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
     排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 社区/村居 → 防控区类型（核心区→警戒区）→ 监测地点升序（拼音）
-    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）随行保留。"""
+    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）、_modified（最小地址区分标记）随行保留。"""
     df = final.copy()
     df['区县'] = df['区县'].map(district_display_sheet)
     df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
@@ -389,8 +411,13 @@ def _display_frame(final, value_col):
     df['_k3'] = df['监测地点'].map(_pinyin_key)
     df = df.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
-    return df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*',
-               '_社区', '_地址1', '_地址2']]
+    out = df[['地市', '区县', '街道', '监测地点', value_col, '风险水平*',
+              '_社区', '_地址1', '_地址2']].copy()
+    if '_modified' in df.columns:
+        out['_modified'] = df['_modified'].values
+    else:
+        out['_modified'] = False
+    return out
 
 
 def pd_writer(path):
