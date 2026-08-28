@@ -20,7 +20,7 @@ from .pipeline import round1
 import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
-                  '_dropped', '_社区', '_地址1', '_地址2', '_flight')
+                  '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -107,7 +107,7 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
                  borders=False, header_bold=False, italic_bold_col=None):
     """写入一个 Sheet。
 
-    - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED 填充（计算过程表标记用）；
+    - flag_col：真值列，整行按 FILL_YELLOW/FILL_RED/FILL_LIGHT_RED 填充（计算过程表标记用）；
     - risk_cols：按风险等级只给这些列着色（风险水平文字列，如“安全/低风险/…”）；
     - risk_src：{输出列: 风险水平文字列}，按风险等级给输出列着色（需求四：颜色套用到 BI*/ADI* 列，
       风险文字列本身不输出）；
@@ -207,6 +207,14 @@ def _write_sheet(writer, name, df, flag_col=None, risk_cols=None, risk_src=None,
             col_idx = header.get(col_name)
             if col_idx:
                 _merge_same_values(ws, col_idx)
+
+    # 出现 "nan" 字样的行：整行红色背景（需在风险着色之后，避免被覆盖）
+    if flag_col == '_nan':
+        for r_idx, (_, row) in enumerate(df.iterrows(), start=2):
+            if flag_col in df.columns and bool(row.get(flag_col)):
+                fill = PatternFill('solid', fgColor=C.FILL_RED)
+                for c_idx in range(1, ncols + 1):
+                    ws.cell(row=r_idx, column=c_idx).fill = fill
 
     # 有内容的单元格（含表头）显示全部框线（细线）
     if borders:
@@ -311,7 +319,8 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
         _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
-                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, italic_bold_col='_flight')
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, italic_bold_col='_flight',
+                     flag_col='_nan')
         _write_sheet(writer, '社区村居字段过长-供审核', long_comm,
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
@@ -340,6 +349,12 @@ def _build_integrated_frame(bi, adi):
         elif col not in m.columns:
             m[col] = ''
     m['_flight'] = m['监测地点'].astype(str).str.contains('，飞行监测')   # 飞行监测标记
+    # 出现 "nan" 字样的行：整合表可见列（地市/区县/街道/监测地点）字面含 'nan'，
+    # 如 源数据社区缺失时 监测地点 "nan（核心区）" 之类
+    m['_nan'] = m.apply(
+        lambda r: any(isinstance(r.get(c), str) and 'nan' in r.get(c)
+                      for c in ('地市', '区县', '街道', '监测地点')),
+        axis=1)
     for col in ('ADI*', 'BI*'):
         if col not in m.columns:
             m[col] = '/'
@@ -357,7 +372,7 @@ def _build_integrated_frame(bi, adi):
     m = m.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
     return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险',
-              '_社区', '_地址1', '_地址2', '_flight']]
+              '_社区', '_地址1', '_地址2', '_flight', '_nan']]
 
 
 def _display_frame(final, value_col):
