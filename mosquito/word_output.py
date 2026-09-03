@@ -119,10 +119,14 @@ def build_section(final_df, exclude_field, excluded_cities, metric):
     risk_rate = round1(risk_num * 100.0 / total) if total else 0.0
 
     # 风险列表（高→中→低，组内按值降序；数量为 0 不输出）
+    # D63：元素格式 {地市+市}{区县}{街道}{监测地点}（{BI值}，第{N}天），N=监测天数
     def element(row):
         dist = row['区县'] if row['区县'] != '市辖区' else ''
-        return '%s市%s%s%s（%.1f）' % (row['地市'], dist, row['街道'], row['监测地点'],
-                                     round1(row[value_col]))   # 四舍五入显示
+        base = '%s市%s%s%s' % (row['地市'], dist, row['街道'], row['监测地点'])
+        d = row.get('_days')
+        if d is not None and not (isinstance(d, float) and d != d) and str(d).strip() != '':
+            return '%s（%.1f，第%d天）' % (base, round1(row[value_col]), int(round(float(d))))
+        return '%s（%.1f）' % (base, round1(row[value_col]))   # 无监测天数（如飞行监测）保持原格式
 
     if metric == 'BI':
         high = df[df[value_col] >= 20]

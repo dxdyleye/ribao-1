@@ -408,6 +408,8 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     record(list(df.index[mask_val_nan]), '监测指标值为空')
     df = df[~mask_val_nan]
     df[C.COL_VALUE] = vals[~mask_val_nan]      # 保留原精度，不取整
+    if df.empty:
+        raise ProcessingError('该日期监测指标值均为空，无有效数据')
 
     # ---- P5 排除字段（支持多个字段，“和/或”连接；单字符串保持子串匹配。
     #      D53：对“地市-区/县/市-街道/乡/镇”与“社区/村居”两列分别匹配，任一列命中即删除） ----
@@ -464,6 +466,16 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
                     'interval': messy_interval.at[i],
                     'dropped': not bool(interval_ok.at[i]),
                 })
+    # 监测天数（村居一览表 BI≥5/ADI>2 行展示用）：以距末例天数为准；>40000 改用距首例天数；
+    # 距首例也 >40000 则用“最初监测日期”到输入日期的间隔天数（D63）
+    disp_days = days
+    if C.COL_FIRST_DAYS in df.columns:
+        hi_last = days > C.DAYS_HIGH
+        disp_days = pd.to_numeric(disp_days, errors='coerce').where(~hi_last, first_days)
+        if messy_mask.any():
+            messy_iv = pd.to_numeric(messy_interval, errors='coerce')
+            disp_days = disp_days.where(~messy_mask, messy_iv)
+    df['_days'] = pd.to_numeric(disp_days, errors='coerce')
     record(list(df.index[~keep_days]), '距末例天数不在范围内')
     df = df[keep_days]
 
@@ -676,6 +688,7 @@ def _bi_ssi_pipeline(bi_ssi, del_rows):
     bi_final['_地址1'] = kept[C.COL_ADDR1]         # 内部列：监测地址（地图定位版）
     bi_final['_地址2'] = kept[C.COL_ADDR2]         # 内部列：监测地址（手填）
     bi_final['_modified'] = kept['_modified']      # 内部列：是否经过最小地址区分处理（供审核表）
+    bi_final['_days'] = kept['_days']              # 内部列：监测天数（一览表 BI≥5/ADI>2 行展示用）
     bi_final['BI*'] = bi_final[C.COL_VALUE]
     bi_final['风险水平*'] = bi_final[C.COL_VALUE].map(C.grade_bi)
     bi_final['_city_idx'] = bi_final['地市'].map(C.CITY_INDEX)
@@ -711,6 +724,7 @@ def _adi_pipeline(adi_raw, del_rows):
     adi_final['_地址1'] = kept[C.COL_ADDR1]         # 内部列：监测地址（地图定位版）
     adi_final['_地址2'] = kept[C.COL_ADDR2]         # 内部列：监测地址（手填）
     adi_final['_modified'] = kept['_modified']      # 内部列：是否经过最小地址区分处理（供审核表）
+    adi_final['_days'] = kept['_days']              # 内部列：监测天数（一览表 BI≥5/ADI>2 行展示用）
     adi_final['ADI'] = adi_final[C.COL_VALUE]
     adi_final['风险水平*'] = adi_final[C.COL_VALUE].map(C.grade_adi)
     adi_final['_city_idx'] = adi_final['地市'].map(C.CITY_INDEX)

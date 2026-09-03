@@ -22,7 +22,7 @@ from .pipeline import round1
 import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
-                  '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan', '_audit_red')
+                  '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan', '_audit_red', '_days')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -295,6 +295,31 @@ def _is_blank(v):
     return v is None or (isinstance(v, float) and v != v) or str(v).strip() == ''
 
 
+def _days_suffix_text(days):
+    """监测天数 -> “（第N天）”文本；无值返回空串"""
+    if days is None:
+        return ''
+    try:
+        if days != days:        # NaN
+            return ''
+    except (TypeError, ValueError):
+        return ''
+    return '（第%d天）' % int(round(float(days)))
+
+
+def _append_monitor_days(frame, risk_col, days_col='_days'):
+    """给超限（风险水平* != '安全'）且带监测天数的行，把“监测地点”追加“（第N天）”（返回副本）"""
+    out = frame.copy()
+    if days_col not in out.columns or '监测地点' not in out.columns:
+        return out
+    d = pd.to_numeric(out[days_col], errors='coerce')
+    mask = (out[risk_col] != '安全') & d.notna()
+    if mask.any():
+        mp = out.loc[mask, '监测地点'].astype(str)
+        out.loc[mask, '监测地点'] = mp + d[mask].map(_days_suffix_text).values
+    return out
+
+
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 /
     Sheet4 社区村居字段过长-供审核 / Sheet5 地址-供审核 / Sheet6 删除数据情况说明
@@ -302,6 +327,7 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
     整合表缺失项（'/'）背景同安全绿色（92D050）；飞行监测数据在整合表中斜体加粗；
     整合表中出现 "nan" 字样的行，其 区县/街道/监测地点 三列背景标红（FF0000），其余列保持原格式。
+    BI 表（BI≥5）/ADI 表（ADI>2）/整合表 的超限行，其“监测地点”在原有基础上追加“（第N天）”（D63）。
     Sheet5 地址-供审核：第一部分 地市/区县/社区村居空白条目（审核原因“地址列存在空白”），
     空一行后第二部分 经过最小地址区分处理的行（区县/街道/监测地点 三列浅红 FFC7CE，
     审核原因“经过最小地址区分，需要审核”），列 = 整合表列 + 监测地点（地图）/（手填）+ 审核原因。
@@ -310,7 +336,9 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """
     bi = _display_frame(bi_final, 'BI*')
     adi = _display_frame(adi_final, 'ADI').rename(columns={'ADI': 'ADI*'})   # 指标列名用 ADI*
-    integrated = _build_integrated_frame(bi, adi)
+    bi_show = _append_monitor_days(bi, '风险水平*')       # BI 表：BI≥5 行加（第N天）
+    adi_show = _append_monitor_days(adi, '风险水平*')     # ADI 表：ADI>2 行加（第N天）
+    integrated = _build_integrated_frame(bi, adi)         # 内部生成带天数的整合表展示文本
     # 社区村居字段过长-供审核：整合表中 基础数据集“社区/村居”≥6 个汉字的记录（列同整合表）
     long_comm = integrated[integrated['_社区'].map(_cjk_count) >= 6].copy()
     # 地址-供审核（原「列名空白-供审核」）：两部分数据，中间空一行。
@@ -335,9 +363,9 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
         parts.append(addr_audit)
     audit = pd.concat(parts, ignore_index=True) if parts else blank_audit
     with pd_writer(path) as writer:
-        _write_sheet(writer, 'BI表', bi, risk_src={'BI*': '风险水平*'},
+        _write_sheet(writer, 'BI表', bi_show, risk_src={'BI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
-        _write_sheet(writer, 'ADI表', adi, risk_src={'ADI*': '风险水平*'},
+        _write_sheet(writer, 'ADI表', adi_show, risk_src={'ADI*': '风险水平*'},
                      drop_cols=['风险水平*'], merge_cols=['地市'], center=True, font_size=C.SIZE_14)
         _write_sheet(writer, 'BI+ADI整合表', integrated, risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
@@ -359,7 +387,11 @@ def _build_integrated_frame(bi, adi):
     """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
     缺失项数值写 '/'；输出列 = 地市/区县/街道/监测地点/ADI*/BI*（ADI 指标列名用 ADI*；
     风险水平列仅内部用于着色）。缺失项（'/'）内部风险按“安全”处理 → 背景同为安全绿色（92D050）。
-    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）、_flight（飞行监测标记）随行保留。"""
+    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）、_flight（飞行监测标记）随行保留。
+
+    D63 监测天数展示：整合表展示的“监测地点”在基础监测地点（merge 键）上，按行内 BI/ADI
+    超限情况追加“（第N天）”：BI≥5 或 ADI>2 的侧若带监测天数，则该侧有资格；两侧都有且天数
+    不同取天数较大者，单侧有取该侧，均无（不超限）则不带天数（以有监测天数的监测地点为准）。"""
     bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
     adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
@@ -377,6 +409,13 @@ def _build_integrated_frame(bi, adi):
         m = m.drop(columns=['_modified_x', '_modified_y'])
     elif '_modified' not in m.columns:
         m['_modified'] = False
+    # 双侧监测天数分别保留（不能取并：各自超限时参与展示天数选择）
+    for col, src in (('_days_bi', '_days_x'), ('_days_adi', '_days_y')):
+        if src in m.columns:
+            m[col] = pd.to_numeric(m[src], errors='coerce')
+            m = m.drop(columns=[src])
+        elif col not in m.columns:
+            m[col] = float('nan')
     m['_flight'] = m['监测地点'].astype(str).str.contains('，飞行监测')   # 飞行监测标记
     # 出现 "nan" 字样的行：整合表可见列（地市/区县/街道/监测地点）字面含 'nan'，
     # 如 源数据社区缺失时 监测地点 "nan（核心区）" 之类
@@ -392,6 +431,18 @@ def _build_integrated_frame(bi, adi):
         if col not in m.columns:
             m[col] = '安全'
         m[col] = m[col].where(m[col].notna(), '安全')
+    # 整合表展示监测地点（D63）：基础监测地点 +（第N天），N 取“超限侧监测天数”的最大值
+    def _pick_mp(r):
+        cands = []
+        if r['BI风险'] != '安全':
+            cands.append(r['_days_bi'])
+        if r['ADI风险'] != '安全':
+            cands.append(r['_days_adi'])
+        cands = [c for c in cands if c is not None and c == c]   # 过滤 None/NaN
+        if not cands:
+            return r['监测地点']
+        return r['监测地点'] + _days_suffix_text(max(cands))
+    m['_mp_disp'] = [ _pick_mp(r) for _, r in m.iterrows() ]
     m['_city_idx'] = m['地市'].map(C.CITY_INDEX).fillna(99).astype(int)
     m['_k1'] = m['区县'].map(_pinyin_key)
     m['_k2'] = m['街道'].map(_pinyin_key)
@@ -400,6 +451,7 @@ def _build_integrated_frame(bi, adi):
     m['_k3'] = m['监测地点'].map(_pinyin_key)
     m = m.sort_values(['_city_idx', '_k1', '_k2', '_kcomm', '_ktype', '_k3'], kind='stable') \
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
+    m['监测地点'] = m['_mp_disp']          # 排序（按基础监测地点）后换展示文本
     return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险',
               '_社区', '_地址1', '_地址2', '_flight', '_nan', '_modified']]
 
@@ -407,7 +459,8 @@ def _build_integrated_frame(bi, adi):
 def _display_frame(final, value_col):
     """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
     排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 社区/村居 → 防控区类型（核心区→警戒区）→ 监测地点升序（拼音）
-    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）、_modified（最小地址区分标记）随行保留。"""
+    内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）、_modified（最小地址区分标记）、
+    _days（监测天数，供超标行展示（第N天）用）随行保留。"""
     df = final.copy()
     df['区县'] = df['区县'].map(district_display_sheet)
     df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
@@ -424,6 +477,10 @@ def _display_frame(final, value_col):
         out['_modified'] = df['_modified'].values
     else:
         out['_modified'] = False
+    if '_days' in df.columns:
+        out['_days'] = df['_days'].values
+    else:
+        out['_days'] = float('nan')
     return out
 
 
