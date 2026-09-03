@@ -1,4 +1,7 @@
 # Python 3.8（Win7 兼容）锁定版本；由 GitHub Actions 安装并打包
+# lxml 须锁定：新版本（≥6.x）不再提供 Python 3.8 的预编译 wheel，
+# Windows 上 pip 会尝试源码编译（缺 libxml2/MSVC）而失败（python-docx 依赖 lxml）
+lxml==4.9.4
 pandas==2.0.3
 openpyxl==3.1.5
 python-docx==1.1.2
