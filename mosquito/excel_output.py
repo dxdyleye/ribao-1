@@ -22,7 +22,8 @@ from .pipeline import round1
 import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
-                  '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan', '_audit_red', '_days')
+                  '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan', '_audit_red', '_days',
+                  '_type')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -383,6 +384,59 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
         _write_sheet(writer, '删除数据情况说明', deletions, font_size=C.SIZE_14)
 
 
+def _norm_addr(v):
+    """监测地址归一化：None/NaN -> ''，其余去首尾空白"""
+    if v is None or (isinstance(v, float) and v != v):
+        return ''
+    return str(v).strip()
+
+
+def _unify_mp_by_address(bi, adi):
+    """D65：BI/ADI 两侧若 (地市,区县,街道,社区,防控区类型, 监测地址(地图定位版), 监测地址(手填))
+    完全一致，而“监测地点”文本不同（如 BI“龙田社区（核心区）” vs ADI“龙田社区（阳光锦府）（核心区）”），
+    说明是同一监测点，把两侧文本统一为字段较长者，使后续按监测地点 merge 能合为一行。
+    需 _社区/_地址1/_地址2/_type 内部列齐备（否则不启用，保持原有行为）。返回 (bi, adi) 副本。
+    """
+    need = ['_社区', '_地址1', '_地址2', '_type']
+    if not all(c in bi.columns and c in adi.columns for c in need):
+        return bi, adi
+    bi = bi.copy(); adi = adi.copy()
+
+    def wkey(r):
+        return (r['地市'], r['区县'], r['街道'],
+                str(r['_社区']).strip(), str(r['_type']).strip(),
+                _norm_addr(r['_地址1']), _norm_addr(r['_地址2']))
+
+    # 同侧宽键应唯一（实测重复为 0）；为防误合并，重复的宽键不参与宽松统一
+    def build_map(frame):
+        out = {}
+        for _, r in frame.iterrows():
+            k = wkey(r)
+            if k in out:
+                out[k] = None          # 标记重复 → 不参与
+            else:
+                out[k] = str(r['监测地点'])
+        return {k: v for k, v in out.items() if v is not None}
+
+    b_map = build_map(bi)
+    a_map = build_map(adi)
+    common = set(b_map) & set(a_map)
+    longer = {k: (b_map[k] if len(b_map[k]) >= len(a_map[k]) else a_map[k]) for k in common}
+
+    def apply_unify(frame):
+        if not longer:
+            return frame
+        keys = frame.apply(wkey, axis=1)
+        repl = keys.map(longer)
+        mask = repl.notna()
+        if mask.any():
+            frame = frame.copy()
+            frame.loc[mask, '监测地点'] = repl[mask]
+        return frame
+
+    return apply_unify(bi), apply_unify(adi)
+
+
 def _build_integrated_frame(bi, adi):
     """BI 表与 ADI 表整合（规则同 Word 一览表）：键 = (地市, 区县, 街道, 监测地点)，
     缺失项数值写 '/'；输出列 = 地市/区县/街道/监测地点/ADI*/BI*（ADI 指标列名用 ADI*；
@@ -391,7 +445,11 @@ def _build_integrated_frame(bi, adi):
 
     D63 监测天数展示：整合表展示的“监测地点”在基础监测地点（merge 键）上，按行内 BI/ADI
     超限情况追加“（第N天）”：BI≥5 或 ADI>2 的侧若带监测天数，则该侧有资格；两侧都有且天数
-    不同取天数较大者，单侧有取该侧，均无（不超限）则不带天数（以有监测天数的监测地点为准）。"""
+    不同取天数较大者，单侧有取该侧，均无（不超限）则不带天数（以有监测天数的监测地点为准）。
+
+    D65 同点宽松合并：见 _unify_mp_by_address。
+    """
+    bi, adi = _unify_mp_by_address(bi, adi)     # D65：先统一同一监测点的“监测地点”文本
     bi_m = bi.rename(columns={'风险水平*': 'BI风险'})
     adi_m = adi.rename(columns={'风险水平*': 'ADI风险'})
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
@@ -481,6 +539,12 @@ def _display_frame(final, value_col):
         out['_days'] = df['_days'].values
     else:
         out['_days'] = float('nan')
+    if '防控区类型' in df.columns:          # 内部列：防控区类型（宽松合并键用）
+        out['_type'] = df['防控区类型'].values
+    elif '_type' in df.columns:
+        out['_type'] = df['_type'].values
+    else:
+        out['_type'] = ''
     return out
 
 
