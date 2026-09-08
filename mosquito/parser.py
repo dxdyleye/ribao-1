@@ -70,7 +70,10 @@ def parse_location(s):
 
 
 def district_display_sheet(district):
-    """村居一览表显示：市辖区->-（东莞/中山，与参考一致），去掉末尾 市/县/区 字"""
+    """村居一览表显示：市辖区->-（东莞/中山，与参考一致），去掉末尾 市/县/区 字；
+    例外（D68）：区县为“城区”（汕尾市城区等）时保留“城区”，不去掉“区”字。"""
     if district == '市辖区':
         return '-'
+    if district == '城区':
+        return '城区'
     return district.rstrip('市县区')
