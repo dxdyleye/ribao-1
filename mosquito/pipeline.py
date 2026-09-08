@@ -159,14 +159,17 @@ def _strip_addr_kind_prefix(s):
 
 def _clean_addr(addr, loc, community, type_):
     """清理地址：先删除“工作地：/居住地：”前缀（D66），再去除与
-    完整地市串/街道/区县/社区/地市名/防控区类型 重复的连续子串（先长后短）"""
+    完整地市串/街道/区县/社区/地市名/省级名/防控区类型 重复的连续子串（先长后短）。
+    注：地址中残留的省级“广东省”（如地图定位地址与 loc 区县级不一致时）
+    一并删除，避免其成为“最小区分地址”（例：立德村（广东省）应为 立德村（坟埕巷（老厝）））。
+    """
     s = _strip_addr_kind_prefix(str(addr))
     parsed = parse_location(loc)
     city = parsed[0] if parsed else None
     district = parsed[1] if parsed else None
     street = parsed[2] if parsed else None
     pats = [p for p in (loc, street, district, community,
-                        city + '市' if city else None, type_) if p]
+                        city + '市' if city else None, type_, '广东省') if p]
     for pat in sorted(set(pats), key=len, reverse=True):
         while pat in s:
             s = s.replace(pat, '')
