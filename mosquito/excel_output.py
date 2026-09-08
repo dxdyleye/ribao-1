@@ -23,7 +23,7 @@ import re
 
 _INTERNAL_COLS = ('_yellow', '_deleted', '_modified', '_K', '_conv', '_orig', '_in_bi', '_src',
                   '_dropped', '_社区', '_地址1', '_地址2', '_flight', '_nan', '_audit_red', '_days',
-                  '_type')
+                  '_type', '_区县')
 _NUM_COLS = ('监测指标值', 'BI*', 'ADI*', '原BI值', '原SSI值', '转换后的SSI值', '最终BI值')
 _CENTER = Alignment(horizontal='center', vertical='center')
 
@@ -323,12 +323,15 @@ def _append_monitor_days(frame, risk_col, days_col='_days'):
 
 def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     """监测点汇总 Excel（村居一览表）：Sheet1 BI表 / Sheet2 ADI表 / Sheet3 BI+ADI整合表 /
-    Sheet4 社区村居字段过长-供审核 / Sheet5 地址-供审核 / Sheet6 删除数据情况说明
+    Sheet4 地址字段过长过短-供审核 / Sheet5 地址-供审核 / Sheet6 删除数据情况说明
 
     需求四：去除“风险水平*”列，原来的风险背景色（绿/黄/橘/红）套用到 BI*/ADI* 数值列；
     整合表缺失项（'/'）背景同安全绿色（92D050）；飞行监测数据在整合表中斜体加粗；
     整合表中出现 "nan" 字样的行，其 区县/街道/监测地点 三列背景标红（FF0000），其余列保持原格式。
     BI 表（BI≥5）/ADI 表（ADI>2）/整合表 的超限行，其“监测地点”在原有基础上追加“（第N天）”（D63）。
+    Sheet4 地址字段过长过短-供审核：过长段（整合表中 区县/街道/社区村居 任一 ≥6 汉字）在前；
+    空一行后为 过短段（区县/街道/社区村居 去空白后字数 ≤1 含空，其 区县/街道/监测地点 三列浅红
+    FFC7CE；东莞/中山原始区县“市辖区”3 字不落入过短），列 = 整合表列。
     Sheet5 地址-供审核：第一部分 地市/区县/社区村居空白条目（审核原因“地址列存在空白”），
     空一行后第二部分 经过最小地址区分处理的行（区县/街道/监测地点 三列浅红 FFC7CE，
     审核原因“经过最小地址区分，需要审核”），列 = 整合表列 + 监测地点（地图）/（手填）+ 审核原因。
@@ -340,8 +343,30 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     bi_show = _append_monitor_days(bi, '风险水平*')       # BI 表：BI≥5 行加（第N天）
     adi_show = _append_monitor_days(adi, '风险水平*')     # ADI 表：ADI>2 行加（第N天）
     integrated = _build_integrated_frame(bi, adi)         # 内部生成带天数的整合表展示文本
-    # 社区村居字段过长-供审核：整合表中 基础数据集“社区/村居”≥6 个汉字的记录（列同整合表）
-    long_comm = integrated[integrated['_社区'].map(_cjk_count) >= 6].copy()
+    # 地址字段过长过短-供审核（原「社区村居字段过长-供审核」）：
+    #   过长段（原数据）：整合表中 区县/街道/社区村居 任一 ≥6 个汉字的记录（列同整合表）；
+    #   空一行后 过短段：区县/街道/社区村居 去空白后字数 ≤1（含 0/空）的记录，
+    #     其 区县/街道/监测地点 三列浅红 FFC7CE（用原始字段判定，东莞/中山“市辖区”3 字不落入）
+    def _len_le1(v):
+        return v is None or (isinstance(v, float) and v != v) or len(str(v).strip()) <= 1
+    flds = ['_区县', '街道', '_社区']
+    long_mask = integrated['_区县'].map(_cjk_count).ge(6) \
+        | integrated['街道'].map(_cjk_count).ge(6) \
+        | integrated['_社区'].map(_cjk_count).ge(6)
+    short_mask = pd.concat([integrated[c].map(_len_le1) for c in flds], axis=1).any(axis=1)
+    long_audit = integrated[long_mask].copy()
+    short_audit = integrated[short_mask].copy()
+    short_audit['_audit_red'] = True
+    parts = [long_audit]
+    if not long_audit.empty and not short_audit.empty:
+        parts.append(pd.DataFrame([{c: '' for c in long_audit.columns}]))   # 空一行分隔
+    if not short_audit.empty:
+        parts.append(short_audit)
+    len_audit = pd.concat(parts, ignore_index=True) if parts else long_audit
+    if '_audit_red' not in len_audit.columns:
+        len_audit['_audit_red'] = False
+    else:
+        len_audit['_audit_red'] = len_audit['_audit_red'].fillna(False)
     # 地址-供审核（原「列名空白-供审核」）：两部分数据，中间空一行。
     #   第一部分：整合表中“地市/区县/社区村居”空白的条目，审核原因 = “地址列存在空白”；
     #   第二部分：整合表中经过最小地址区分处理的行（_modified），整行浅红，审核原因 = “经过最小地址区分，需要审核”。
@@ -372,10 +397,11 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
                      font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, italic_bold_col='_flight',
                      flag_col='_nan', flag_cols=['区县', '街道', '监测地点'])
-        _write_sheet(writer, '社区村居字段过长-供审核', long_comm,
+        _write_sheet(writer, '地址字段过长过短-供审核', len_audit,
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
-                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True)
+                     font_size=C.SIZE_XIAOSI, borders=True, header_bold=True, flag_col='_audit_red',
+                     flag_cols=['区县', '街道', '监测地点'])
         _write_sheet(writer, '地址-供审核', audit,
                      risk_src={'ADI*': 'ADI风险', 'BI*': 'BI风险'},
                      drop_cols=['ADI风险', 'BI风险'], merge_cols=['地市'], center=True,
@@ -455,7 +481,8 @@ def _build_integrated_frame(bi, adi):
     m = bi_m.merge(adi_m, on=['地市', '区县', '街道', '监测地点'], how='outer')
     for col, left, right in (('_社区', '_社区_x', '_社区_y'),
                              ('_地址1', '_地址1_x', '_地址1_y'),
-                             ('_地址2', '_地址2_x', '_地址2_y')):
+                             ('_地址2', '_地址2_x', '_地址2_y'),
+                             ('_区县', '_区县_x', '_区县_y')):
         if left in m.columns:                        # 合并产生的双侧列取并
             m[col] = m[left].fillna(m[right])
             m = m.drop(columns=[left, right])
@@ -511,15 +538,17 @@ def _build_integrated_frame(bi, adi):
         .drop(columns=['_k1', '_k2', '_kcomm', '_ktype', '_k3']).reset_index(drop=True)
     m['监测地点'] = m['_mp_disp']          # 排序（按基础监测地点）后换展示文本
     return m[['地市', '区县', '街道', '监测地点', 'ADI*', 'ADI风险', 'BI*', 'BI风险',
-              '_社区', '_地址1', '_地址2', '_flight', '_nan', '_modified']]
+              '_社区', '_区县', '_地址1', '_地址2', '_flight', '_nan', '_modified']]
 
 
 def _display_frame(final, value_col):
     """最终表 -> 村居一览表显示口径（区县去后缀、市辖区->-、数值四舍五入1位），
     排序：地市固定顺序 → 区县升序（拼音）→ 街道升序（拼音）→ 社区/村居 → 防控区类型（核心区→警戒区）→ 监测地点升序（拼音）
     内部列 _社区（社区/村居）、_地址1/_地址2（监测地址）、_modified（最小地址区分标记）、
-    _days（监测天数，供超标行展示（第N天）用）随行保留。"""
+    _days（监测天数，供超标行展示（第N天）用）、_区县（原始区县，供审核表判定用）随行保留。"""
     df = final.copy()
+    if '区县' in df.columns:
+        df['_区县'] = df['区县'].map(lambda v: '' if (v is None or (isinstance(v, float) and v != v)) else str(v).strip())
     df['区县'] = df['区县'].map(district_display_sheet)
     df[value_col] = df[value_col].map(round1)       # 与参考一览表一致：四舍五入保留 1 位
     df['_k1'] = df['区县'].map(_pinyin_key)
@@ -545,6 +574,10 @@ def _display_frame(final, value_col):
         out['_type'] = df['_type'].values
     else:
         out['_type'] = ''
+    if '_区县' in df.columns:
+        out['_区县'] = df['_区县'].values
+    else:
+        out['_区县'] = ''
     return out
 
 

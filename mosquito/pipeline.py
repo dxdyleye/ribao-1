@@ -142,11 +142,25 @@ def _make_keys(frame):
 # ---------------- 最小区分地址（3.8 节，金标准校准版） ----------------
 
 _ADDR_SEP = re.compile(r'[，,、。\s]+')
+_ADDR_KIND_PREFIX = re.compile(r'^(工作地|居住地)\s*[:：]\s*')   # D66：地址开头的“工作地：/居住地：”
+
+
+def _strip_addr_kind_prefix(s):
+    """D66：删除地址/最小区分地址开头的“工作地：/居住地：”前缀字样（全角/半角冒号均可）"""
+    if not isinstance(s, str):
+        return s
+    s = s.strip()
+    while True:
+        m = _ADDR_KIND_PREFIX.match(s)
+        if not m:
+            return s
+        s = s[m.end():]
 
 
 def _clean_addr(addr, loc, community, type_):
-    """清理地址：依次去除与 完整地市串/街道/区县/社区/地市名/防控区类型 重复的连续子串（先长后短）"""
-    s = str(addr)
+    """清理地址：先删除“工作地：/居住地：”前缀（D66），再去除与
+    完整地市串/街道/区县/社区/地市名/防控区类型 重复的连续子串（先长后短）"""
+    s = _strip_addr_kind_prefix(str(addr))
     parsed = parse_location(loc)
     city = parsed[0] if parsed else None
     district = parsed[1] if parsed else None
@@ -208,6 +222,7 @@ def apply_address_distinction(frame):
     分别用“监测地址（地图定位版）优先”与“监测地址（手填）优先”两种来源按原规则
     计算最小区分地址，取字段较短者作为最终值（等长时取地图定位版）；仍冲突的追加
     （1）（2）… 序号。仅当组内存在 >=2 个不同地址时改名。返回新增 '_modified' 标记的副本。
+    D66：生成的最终监测地点中删除“工作地：/居住地：”前缀字样。
     """
     frame = frame.copy()
     frame['_modified'] = False
@@ -281,6 +296,9 @@ def apply_address_distinction(frame):
             v = final.get(i)
             if v is None:
                 continue
+            v = _strip_addr_kind_prefix(v)     # D66：删除“工作地：/居住地：”前缀
+            if not v:
+                continue                        # 仅剩前缀时视同无地址，不改名
             while v.startswith(comm):
                 v = v[len(comm):]
             new = '%s（%s）（%s）' % (comm, v, typ)
