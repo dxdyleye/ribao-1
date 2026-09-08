@@ -344,16 +344,17 @@ def write_monitoring_workbook(path, bi_final, adi_final, deletions):
     adi_show = _append_monitor_days(adi, '风险水平*')     # ADI 表：ADI>2 行加（第N天）
     integrated = _build_integrated_frame(bi, adi)         # 内部生成带天数的整合表展示文本
     # 地址字段过长过短-供审核（原「社区村居字段过长-供审核」）：
-    #   过长段（原数据）：整合表中 区县/街道/社区村居 任一 ≥6 个汉字的记录（列同整合表）；
-    #   空一行后 过短段：区县/街道/社区村居 去空白后字数 ≤1（含 0/空）的记录，
-    #     其 区县/街道/监测地点 三列浅红 FFC7CE（用原始字段判定，东莞/中山“市辖区”3 字不落入）
+    #   过长段（原数据）：整合表中 社区/村居 ≥6 汉字，或最终展示 区县/街道 汉字数 ≥6 的记录；
+    #   空一行后 过短段：整合表最终展示 区县 或 街道 中任一 去空白后字数 ≤1（含 0/空）的记录
+    #     （区县为“-”即东莞/中山市辖区除外，不列入），其 区县/街道/监测地点 三列浅红 FFC7CE。
+    #   过短只查 区县/街道 两列展示值（不查社区村居）；汕尾“城区”显示为“城”（1 字）会列出。
     def _len_le1(v):
         return v is None or (isinstance(v, float) and v != v) or len(str(v).strip()) <= 1
-    flds = ['_区县', '街道', '_社区']
-    long_mask = integrated['_区县'].map(_cjk_count).ge(6) \
-        | integrated['街道'].map(_cjk_count).ge(6) \
-        | integrated['_社区'].map(_cjk_count).ge(6)
-    short_mask = pd.concat([integrated[c].map(_len_le1) for c in flds], axis=1).any(axis=1)
+    long_mask = integrated['_社区'].map(_cjk_count).ge(6) \
+        | integrated['区县'].map(_cjk_count).ge(6) \
+        | integrated['街道'].map(_cjk_count).ge(6)
+    short_dist = integrated['区县'].map(_len_le1) & (integrated['区县'].astype(str).str.strip() != '-')
+    short_mask = short_dist | integrated['街道'].map(_len_le1)
     long_audit = integrated[long_mask].copy()
     short_audit = integrated[short_mask].copy()
     short_audit['_audit_red'] = True
