@@ -106,7 +106,8 @@ def build_section(final_df, exclude_field, excluded_cities, metric):
         city_list = '、'.join(names[:-1]) + '和' + last_name
 
     total = len(df)
-    district_num = df['区县'].nunique()                       # 区县名去重（市辖区合并，与参考一致）
+    # D69：区县数 = 不重复区县名数，但东莞/中山的“市辖区”不计算在内
+    district_num = df.loc[df['区县'] != '市辖区', '区县'].nunique()
     street_num = df.groupby(['地市', '街道']).ngroups
     point_num = df.groupby(['街道', '监测地点']).ngroups      # 监测点=（街道+监测地点）去重
     if metric == 'BI':
