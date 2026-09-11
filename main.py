@@ -36,13 +36,21 @@ class App(object):
         self.entry_file = ttk.Entry(frm, width=62)
         self.entry_file.grid(row=0, column=1, sticky='we', **pad)
         ttk.Button(frm, text='浏览…', command=self.choose_file).grid(row=0, column=2, **pad)
-        ttk.Label(frm, text='要求：需包含所有监测日期并补充广州市街道数据的总库表',
+        ttk.Label(frm, text='要求：需包含所有监测日期',
                   foreground='gray').grid(row=1, column=1, columnspan=2, sticky='w', padx=8)
 
+        # 广州市表文件（可选）：总库中广州市相关数据以此表为准
+        ttk.Label(frm, text='输入广州市表文件：').grid(row=2, column=0, sticky='w', **pad)
+        self.entry_gz = ttk.Entry(frm, width=62)
+        self.entry_gz.grid(row=2, column=1, sticky='we', **pad)
+        ttk.Button(frm, text='浏览…', command=self.choose_gz).grid(row=2, column=2, **pad)
+        ttk.Label(frm, text='需包含所有监测日期',
+                  foreground='gray').grid(row=3, column=1, columnspan=2, sticky='w', padx=8)
+
         # 目标日期
-        ttk.Label(frm, text='目标日期：').grid(row=2, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='目标日期：').grid(row=4, column=0, sticky='w', **pad)
         d = tk.Frame(frm)
-        d.grid(row=2, column=1, sticky='w', **pad)
+        d.grid(row=4, column=1, sticky='w', **pad)
         now = date.today()
         self.var_year = tk.StringVar(value=str(now.year))
         self.var_month = tk.StringVar(value=str(now.month))
@@ -55,9 +63,9 @@ class App(object):
         ttk.Label(d, text='日').pack(side='left')
 
         # 排除字段（两列：区/县/市-街道/乡/镇 + 社区/村居；多个字段之间为“或”）
-        ttk.Label(frm, text='排除字段（可选）：').grid(row=3, column=0, sticky='nw', **pad)
+        ttk.Label(frm, text='排除字段（可选）：').grid(row=5, column=0, sticky='nw', **pad)
         self.excl_frame = ttk.Frame(frm)
-        self.excl_frame.grid(row=3, column=1, columnspan=2, sticky='we', **pad)
+        self.excl_frame.grid(row=5, column=1, columnspan=2, sticky='we', **pad)
         self.excl_rows = []
         bar = ttk.Frame(self.excl_frame)
         bar.pack(side='bottom', fill='x', pady=(3, 0))
@@ -75,26 +83,26 @@ class App(object):
         self._add_exclude_row()
 
         # 飞行监测表（可选，需求一）
-        ttk.Label(frm, text='飞行监测表（可选）：').grid(row=5, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='飞行监测表（可选）：').grid(row=7, column=0, sticky='w', **pad)
         self.entry_flight = ttk.Entry(frm, width=62)
-        self.entry_flight.grid(row=5, column=1, sticky='we', **pad)
-        ttk.Button(frm, text='浏览…', command=self.choose_flight).grid(row=5, column=2, **pad)
+        self.entry_flight.grid(row=7, column=1, sticky='we', **pad)
+        ttk.Button(frm, text='浏览…', command=self.choose_flight).grid(row=7, column=2, **pad)
 
         # 输出目录
-        ttk.Label(frm, text='输出目录：').grid(row=6, column=0, sticky='w', **pad)
+        ttk.Label(frm, text='输出目录：').grid(row=8, column=0, sticky='w', **pad)
         self.entry_out = ttk.Entry(frm, width=62)
-        self.entry_out.grid(row=6, column=1, sticky='we', **pad)
-        ttk.Button(frm, text='选择…', command=self.choose_dir).grid(row=6, column=2, **pad)
+        self.entry_out.grid(row=8, column=1, sticky='we', **pad)
+        ttk.Button(frm, text='选择…', command=self.choose_dir).grid(row=8, column=2, **pad)
 
         # 开始按钮
         self.btn = ttk.Button(frm, text='开始处理', command=self.on_start)
-        self.btn.grid(row=7, column=1, sticky='w', **pad)
+        self.btn.grid(row=9, column=1, sticky='w', **pad)
 
         # 日志区
-        ttk.Label(frm, text='处理日志：').grid(row=8, column=0, sticky='nw', **pad)
+        ttk.Label(frm, text='处理日志：').grid(row=10, column=0, sticky='nw', **pad)
         self.txt = tk.Text(frm, height=18, state='disabled', font=('Consolas', 9))
-        self.txt.grid(row=9, column=0, columnspan=3, sticky='nsew', **pad)
-        frm.rowconfigure(9, weight=1)
+        self.txt.grid(row=11, column=0, columnspan=3, sticky='nsew', **pad)
+        frm.rowconfigure(11, weight=1)
         frm.columnconfigure(1, weight=1)
 
         self.root.after(100, self._poll)
@@ -165,6 +173,19 @@ class App(object):
                 messagebox.showwarning(
                     '路径提示',
                     '所选飞行监测表当前无法访问（可能是网盘/OneDrive 在线占位文件未下载到本地）：\n%s\n\n'
+                    '请先在资源管理器中右键该文件→“始终保留在此设备上/下载”，再重新选择。' % p)
+
+    def choose_gz(self):
+        p = filedialog.askopenfilename(
+            title='选择广州市表Excel文件',
+            filetypes=[('Excel 文件', '*.xlsx *.xls'), ('所有文件', '*.*')])
+        if p:
+            self.entry_gz.delete(0, 'end')
+            self.entry_gz.insert(0, p)
+            if not os.path.isfile(p):
+                messagebox.showwarning(
+                    '路径提示',
+                    '所选广州市表当前无法访问（可能是网盘/OneDrive 在线占位文件未下载到本地）：\n%s\n\n'
                     '请先在资源管理器中右键该文件→“始终保留在此设备上/下载”，再重新选择。' % p)
 
     def choose_dir(self):
@@ -251,23 +272,32 @@ class App(object):
         if fp and not fp.lower().endswith(('.xlsx', '.xls')):
             messagebox.showerror('输入错误', '飞行监测表必须为 Excel（.xlsx/.xls）。')
             return
+        gz = self.entry_gz.get().strip() or None
+        if gz and not os.path.isfile(gz):
+            messagebox.showerror('输入错误', '广州市表文件不存在。')
+            return
+        if gz and not gz.lower().endswith(('.xlsx', '.xls')):
+            messagebox.showerror('输入错误', '广州市表必须为 Excel（.xlsx/.xls）。')
+            return
 
         self.running = True
         self.btn.configure(state='disabled')
         self.log('开始处理…')
         self.log('总库表：%s' % f)
+        if gz:
+            self.log('广州市表：%s（总库中广州市数据以此表为准）' % gz)
         if fp:
             self.log('飞行监测表：%s' % fp)
         self.log('输出目录：%s' % out)
         self.log('目标日期：%d年%d月%d日' % (target.year, target.month, target.day))
-        threading.Thread(target=self.worker, args=(f, out, target, exclude, fp), daemon=True).start()
+        threading.Thread(target=self.worker, args=(f, out, target, exclude, fp, gz), daemon=True).start()
 
-    def worker(self, f, out, target, exclude, flight_path):
+    def worker(self, f, out, target, exclude, flight_path, gz_path=None):
         def log(msg):
             self.q.put(('log', msg))
         try:
             paths = process_file(f, out, target.year, target.month, target.day,
-                                 exclude, flight_path, log=log)
+                                 exclude, flight_path, log=log, gz_path=gz_path)
             self.q.put(('done', paths))
         except ProcessingError as e:
             self.q.put(('error', '处理中止：%s' % e))

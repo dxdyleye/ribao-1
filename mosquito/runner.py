@@ -62,8 +62,73 @@ def _check_input_file(input_path, label):
     raise ProcessingError('\n'.join(msg))
 
 
-def process_file(input_path, output_dir, year, month, day, exclude=None, flight_path=None, log=None):
-    """返回生成的 3 个文件完整路径列表（总库表为唯一输入；飞行监测表可选）。"""
+def merge_guangzhou(source, gz_df, target):
+    """D70：总库中“广州市”相关数据以广州市表为准。
+
+    1. 剔除总库中广州市的行（按 地市 列去“市”后为“广州”，或按 地市-区/县/市-街道/乡/镇 解析出地市为广州）；
+    2. 广州市表按 (地市-区/县/市-街道/乡/镇) 解析出 地市/区县/街道 三列（与总库口径一致，供流程使用）；
+    3. 广州市表补算两列天数（其源表通常无这两列）：
+       - 距末例天数 = 输入日期 - 末例病例报告时间（天）；
+       - 无末例时间 → 该值 = 输入日期 - 首例病例报告时间（天）；
+       - 首末例都没有 → 置 40001（>40000，触发 P6 乱码规则处理），距首例天数同样置 40001；
+       - 距首例天数 = 输入日期 - 首例病例报告时间（天）；无首例 → 40001。
+    返回合并后的 DataFrame（列与总库对齐）。
+    """
+    from .parser import parse_location
+
+    def _city_of(row):
+        loc = row.get(C.COL_LOC)
+        p = parse_location(loc) if loc is not None and str(loc).strip() else None
+        return p[0] if p else None
+
+    src = source.copy()
+    is_gz = src['地市'].map(lambda v: str(v).strip().rstrip('市') == '广州' if v is not None and str(v).strip() else False)
+    if not is_gz.any():                      # 地市列不可靠时按 loc 解析判断
+        is_gz = src.apply(lambda r: _city_of(r) == '广州', axis=1)
+    n_gz = int(is_gz.sum())
+    src = src[~is_gz].copy()
+
+    gz = gz_df.copy()
+    # 与总库列对齐：只保留总库已有列，缺失列补空
+    for col in src.columns:
+        if col not in gz.columns:
+            gz[col] = None
+    gz = gz[[c for c in src.columns]]
+    # 解析行政区划三列（与总库一致）
+    parsed = gz[C.COL_LOC].map(parse_location)
+    gz['地市'] = [p[0] if p else None for p in parsed]
+    gz['区县'] = [p[1] if p else None for p in parsed]
+    gz['街道'] = [p[2] if p else None for p in parsed]
+
+    # 补算天数（D70 规则）
+    tgt = pd.Timestamp(target)
+    last = pd.to_datetime(gz[C.COL_LAST_CASE], errors='coerce') if C.COL_LAST_CASE in gz.columns else None
+    first = pd.to_datetime(gz[C.COL_FIRST_CASE], errors='coerce') if C.COL_FIRST_CASE in gz.columns else None
+    d_last = (tgt - last).dt.days if last is not None else None
+    d_first = (tgt - first).dt.days if first is not None else None
+    if d_last is None:
+        d_last = pd.Series([None] * len(gz), index=gz.index)
+    if d_first is None:
+        d_first = pd.Series([None] * len(gz), index=gz.index)
+    days = d_last.where(d_last.notna(), d_first)          # 无末例 → 用首例
+    no_both = d_last.isna() & d_first.isna()              # 都无 → 乱码规则
+    days = days.mask(no_both, C.DAYS_HIGH + 1)
+    fd = d_first.mask(no_both, C.DAYS_HIGH + 1)
+    fd = fd.where(fd.notna(), C.DAYS_HIGH + 1)
+    gz[C.COL_DAYS] = days
+    gz[C.COL_FIRST_DAYS] = fd
+
+    out = pd.concat([src, gz], ignore_index=True, sort=False)
+    return out
+
+
+def process_file(input_path, output_dir, year, month, day, exclude=None, flight_path=None, log=None,
+                 gz_path=None):
+    """返回生成的输出文件完整路径列表。
+
+    - 总库表为唯一必需输入；飞行监测表（可选）；广州市表（可选，D70）：
+      提供时，总库中“广州市”相关数据以广州市表为准（剔除总库广州行 + 并入广州表行）。
+    """
     def logmsg(s):
         if log:
             log(s)
@@ -78,6 +143,17 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, flight_
                               % (e, input_path, ('\n' + note) if note else ''))
     target = date(year, month, day)
 
+    gz_df = None
+    if gz_path:
+        _check_input_file(gz_path, '广州市表')
+        logmsg('正在读取广州市表文件…')
+        try:
+            gz_df = pd.read_excel(gz_path)
+        except OSError as e:
+            note = _file_attr_note(gz_path)
+            raise ProcessingError('读取广州市表文件失败（%s）：\n%s%s'
+                                  % (e, gz_path, ('\n' + note) if note else ''))
+
     flight_df = None
     if flight_path:
         _check_input_file(flight_path, '飞行监测表')
@@ -88,6 +164,10 @@ def process_file(input_path, output_dir, year, month, day, exclude=None, flight_
             note = _file_attr_note(flight_path)
             raise ProcessingError('读取飞行监测表文件失败（%s）：\n%s%s'
                                   % (e, flight_path, ('\n' + note) if note else ''))
+
+    if gz_df is not None:
+        logmsg('正在合并广州市表数据（总库广州数据以广州市表为准）…')
+        source = merge_guangzhou(source, gz_df, target)
 
     logmsg('正在预处理数据（日期筛选/空值/排除字段/距末例天数/防控区类型）…')
     res = run_pipeline(source, target, exclude, flight_df=flight_df)

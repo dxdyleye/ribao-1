@@ -12,6 +12,8 @@ COL_METHOD = '监测方法（如BI/RI/MOI/ADI等）'
 COL_ADDR1 = '监测地址（地图定位版）'
 COL_ADDR2 = '监测地址（如“监测地址”定位字段不可用，可手填；如定位可用，不需要重复填写）'
 COL_FIRST_DAYS = '距首例天数（自动计算）'   # P6 附加条件（D56）
+COL_LAST_CASE = '末例病例报告时间'          # 广州市表补算距末例天数用（D70）
+COL_FIRST_CASE = '首例病例报告时间'         # 广州市表补算距首例天数用（D70）
 
 REQUIRED_COLUMNS = [COL_TIME, COL_VALUE, COL_LOC, COL_DAYS, COL_TYPE,
                     COL_COMMUNITY, COL_METHOD, COL_ADDR1, COL_ADDR2]
