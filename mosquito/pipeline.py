@@ -353,6 +353,30 @@ def _compute_first_monitor(source_df):
     return out
 
 
+def _compute_last_case_time(source_df, target_date):
+    """D71：按 (地市-区/县/市-街道/乡/镇, 社区/村居) 计算该点“最后的病例报告时间”。
+
+    取该点全部记录中 `首例病例报告时间` 与 `末例病例报告时间` 两列的**较大值**，
+    且只采用**不晚于输入日期**的病例报告时间（避免用到输入日期之后的病例）。
+    返回 {(loc, comm): date}；该点在输入日期及之前没有任何病例报告时间则不含该键。
+    """
+    cols = [c for c in (C.COL_FIRST_CASE, C.COL_LAST_CASE) if c in source_df.columns]
+    if not cols:
+        return {}
+    loc = source_df[C.COL_LOC].fillna('').astype(str).str.strip()
+    comm = source_df[C.COL_COMMUNITY].fillna('').astype(str).str.strip()
+    # 两列逐行取较大值（DataFrame.max 自动忽略 NaT）
+    mx = pd.concat([pd.to_datetime(source_df[c], errors='coerce') for c in cols], axis=1).max(axis=1)
+    t = pd.DataFrame({C.COL_LOC: loc, C.COL_COMMUNITY: comm, '_case': mx}).dropna(subset=['_case'])
+    if t.empty:
+        return {}
+    t = t[t['_case'] <= pd.Timestamp(target_date)]
+    out = {}
+    for (l, c), grp in t.groupby([C.COL_LOC, C.COL_COMMUNITY]):
+        out[(l, c)] = grp['_case'].max().date()
+    return out
+
+
 def _build_messy_frames(messy_rows):
     """把捕获的“乱码”记录（距末例天数>40000 且 距首例天数>40000）整理为 BI/ADI 两个 DataFrame：
     列 = 基础数据集列 + 最初监测日期、距输入日期天数、_dropped（供浅红标记，内部列）。"""
@@ -408,6 +432,8 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     excluded_cities = set()
     # 该点最初监测日期映射（用于 P6 乱码规则：末例>40000 且 首例>40000 的记录）
     first_monitor = _compute_first_monitor(source_df)
+    # D71：该点“最后的病例报告时间”映射（乱码记录优先用它判定监测周期）
+    last_case_time = _compute_last_case_time(source_df, target_date)
 
     def record(idx_list, reason):
         for i in idx_list:
@@ -447,9 +473,12 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
         df = df[~mask_ex]
 
     # ---- P6 距末例天数（保留 <=5 或 >40000；其中 >40000 的记录仅保留 距首例天数 <=5 或 >40000 的，D56） ----
-    # 新增（乱码规则）：距末例天数>40000 且 距首例天数>40000 的记录，按 (地市-区/县/市-街道/乡/镇,
-    # 社区/村居) 确定该点“最初监测日期”（最近一次中断后重新开始的日期），
-    # 计算到输入日期的间隔天数：<=5 纳入、>5 放弃；这些记录另输出至“乱码处理”sheet。
+    # 乱码规则（D71）：距末例天数>40000 且 距首例天数>40000 的记录（两列天数均乱码，
+    #   即该行 首例/末例病例报告时间为空），其“最初监测时间”取**该点有记录的最后病例报告时间**
+    #   （由 首例病例报告时间 / 末例病例报告时间 两列取不晚于输入日期的最大值确定）；
+    #   该时间距输入日期 ≤5 天纳入、>5 天放弃；若该点完全没有病例报告时间，退回原规则
+    #   （按 (地市-区/县/市-街道/乡/镇, 社区/村居, 监测方法) 取最近一次中断后重新开始的监测日期）。
+    #   这些记录另输出至“乱码处理”sheet。
     days = pd.to_numeric(df[C.COL_DAYS], errors='coerce')
     keep_days = days.notna() & (days <= C.DAYS_LOW)
     messy_rows = []          # 乱码记录（末例>40000 且 首例>40000），供 基础数据集 乱码 sheet
@@ -461,13 +490,17 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
         messy_mask = mask_high & first_high              # 末例>40000 且 首例>40000
         keep_days = keep_days | (mask_high & first_le5)  # 首例<=5 保留
         messy_interval = pd.Series([None] * len(df), index=df.index, dtype=object)
+        messy_ref = pd.Series([None] * len(df), index=df.index, dtype=object)   # 实际采用的“最初监测时间”
         if messy_mask.any():
             locs = df.loc[messy_mask, C.COL_LOC].fillna('').astype(str).str.strip()
             comms = df.loc[messy_mask, C.COL_COMMUNITY].fillna('').astype(str).str.strip()
             methods = df.loc[messy_mask, C.COL_METHOD].fillna('').astype(str).str.strip()
-            starts = [first_monitor.get((l, c, m)) for l, c, m in zip(locs, comms, methods)]
-            messy_interval.loc[messy_mask] = [
-                (target_date - st).days if st is not None else None for st in starts]
+            for i, l, c, m in zip(df.index[messy_mask], locs, comms, methods):
+                ref = last_case_time.get((l, c))             # D71：该点最后的病例报告时间
+                if ref is None:                              # 无病例报告时间 → 退回原乱码规则
+                    ref = first_monitor.get((l, c, m))
+                messy_ref.at[i] = ref
+                messy_interval.at[i] = (target_date - ref).days if ref is not None else None
         interval_ok = pd.Series([False] * len(df), index=df.index)
         has_iv = messy_interval.notna()
         interval_ok[has_iv] = pd.to_numeric(messy_interval[has_iv]) <= C.DAYS_LOW
@@ -481,9 +514,7 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
                     'loc': r[C.COL_LOC], 'comm': r[C.COL_COMMUNITY], 'type': r[C.COL_TYPE],
                     'addr1': r[C.COL_ADDR1], 'addr2': r[C.COL_ADDR2],
                     'time': r[C.COL_TIME], 'method': r[C.COL_METHOD], 'value': r[C.COL_VALUE],
-                    'first_monitor': first_monitor.get(
-                        (str(r[C.COL_LOC]).strip(), str(r[C.COL_COMMUNITY]).strip(),
-                         str(r[C.COL_METHOD]).strip())),
+                    'first_monitor': messy_ref.at[i],        # D71：最初监测时间（病例报告时间）
                     'interval': messy_interval.at[i],
                     'dropped': not bool(interval_ok.at[i]),
                 })
