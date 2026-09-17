@@ -6,6 +6,12 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# actions: write 用于清理旧 artifacts（避免占满 Actions 存储配额）
+# contents: write 用于 tag 时创建 Release
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -22,15 +28,60 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Clean old artifacts (keep only the newest one)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          $headers = @{
+            Authorization          = "Bearer $env:GH_TOKEN"
+            Accept                 = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          # 分页取全部 artifacts
+          $arts = @()
+          $page = 1
+          while ($true) {
+            try {
+              $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/artifacts?per_page=100&page=$page" -Headers $headers
+            } catch {
+              Write-Warning "查询 artifacts 失败（跳过清理）：$_"
+              exit 0
+            }
+            $batch = @($resp.artifacts)
+            $arts += $batch
+            if ($batch.Count -lt 100 -or $page -ge 20) { break }
+            $page++
+          }
+          Write-Host "现有 artifacts：$($arts.Count) 个"
+          if ($arts.Count -le 1) {
+            Write-Host "无需清理（保留最新 1 个）"
+            exit 0
+          }
+          $sorted = $arts | Sort-Object -Property created_at -Descending
+          $drop = $sorted | Select-Object -Skip 1
+          foreach ($a in $drop) {
+            try {
+              Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$repo/actions/artifacts/$($a.id)" -Headers $headers | Out-Null
+              Write-Host "已删除 artifact：$($a.name) id=$($a.id) 创建于 $($a.created_at)"
+            } catch {
+              Write-Warning "删除 artifact id=$($a.id) 失败：$_"
+            }
+          }
+
       - name: Build with PyInstaller
         run: pyinstaller --noconfirm MosquitoMonitorTool.spec
 
+      # 存储配额占满时上传会失败；不让它把整个构建标记为失败（配额会在 6-12 小时内重算，稍后重跑即可）
       - name: Upload artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: MosquitoMonitorTool-windows
           path: dist/MosquitoMonitorTool.exe
           if-no-files-found: error
+          retention-days: 3
 
       - name: Create GitHub Release (on tags only)
         if: startsWith(github.ref, 'refs/tags/')
