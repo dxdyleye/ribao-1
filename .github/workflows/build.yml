@@ -54,10 +54,11 @@ jobs:
         with:
           files: dist/MosquitoMonitorTool.exe
 
-      # 上传后再清一次：把本次构建之前遗留的旧制品删掉，保证仓库里只剩最新 1 个制品
-      - name: Clean old artifacts (after upload, keep newest 1)
+      # 上传后再清一次：删掉本次构建之前遗留的旧制品与旧运行记录，
+      # 保证仓库里只剩最新 1 个制品、最新 1 条运行记录（进行中的运行不会被删）
+      - name: Clean old artifacts and runs (keep newest 1)
         if: always()
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: ./scripts/clean-artifacts.ps1 -Keep 1
+        run: ./scripts/clean-artifacts.ps1 -Keep 1 -KeepRuns 1
