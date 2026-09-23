@@ -28,47 +28,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Clean old artifacts (keep only the newest one)
+      # 构建前先清理：旧制品占满配额时会导致后面的上传失败
+      - name: Clean old artifacts (before build, keep newest 1)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $repo = $env:GITHUB_REPOSITORY
-          $headers = @{
-            Authorization          = "Bearer $env:GH_TOKEN"
-            Accept                 = "application/vnd.github+json"
-            "X-GitHub-Api-Version" = "2022-11-28"
-          }
-          # 分页取全部 artifacts
-          $arts = @()
-          $page = 1
-          while ($true) {
-            try {
-              $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/artifacts?per_page=100&page=$page" -Headers $headers
-            } catch {
-              Write-Warning "查询 artifacts 失败（跳过清理）：$_"
-              exit 0
-            }
-            $batch = @($resp.artifacts)
-            $arts += $batch
-            if ($batch.Count -lt 100 -or $page -ge 20) { break }
-            $page++
-          }
-          Write-Host "现有 artifacts：$($arts.Count) 个"
-          if ($arts.Count -le 1) {
-            Write-Host "无需清理（保留最新 1 个）"
-            exit 0
-          }
-          $sorted = $arts | Sort-Object -Property created_at -Descending
-          $drop = $sorted | Select-Object -Skip 1
-          foreach ($a in $drop) {
-            try {
-              Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$repo/actions/artifacts/$($a.id)" -Headers $headers | Out-Null
-              Write-Host "已删除 artifact：$($a.name) id=$($a.id) 创建于 $($a.created_at)"
-            } catch {
-              Write-Warning "删除 artifact id=$($a.id) 失败：$_"
-            }
-          }
+        run: ./scripts/clean-artifacts.ps1 -Keep 1
 
       - name: Build with PyInstaller
         run: pyinstaller --noconfirm MosquitoMonitorTool.spec
@@ -88,3 +53,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/MosquitoMonitorTool.exe
+
+      # 上传后再清一次：把本次构建之前遗留的旧制品删掉，保证仓库里只剩最新 1 个制品
+      - name: Clean old artifacts (after upload, keep newest 1)
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/clean-artifacts.ps1 -Keep 1
