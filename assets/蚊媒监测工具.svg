@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#35a86f"/>
+      <stop offset="1" stop-color="#186b48"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="4"/>
+
+  <!-- 蚊虫：双翅 -->
+  <ellipse cx="98" cy="98" rx="36" ry="16" fill="#ffffff" fill-opacity="0.9" transform="rotate(-30 98 98)"/>
+  <ellipse cx="158" cy="98" rx="36" ry="16" fill="#ffffff" fill-opacity="0.9" transform="rotate(30 158 98)"/>
+
+  <!-- 腿 -->
+  <path d="M118 122 L86 108 M116 138 L82 144 M118 154 L92 172
+           M138 122 L170 108 M140 138 L174 144 M138 154 L164 172"
+        stroke="#ffffff" stroke-width="7" stroke-linecap="round" fill="none"/>
+
+  <!-- 触角 -->
+  <path d="M121 84 L106 64 M135 84 L150 64"
+        stroke="#ffffff" stroke-width="7" stroke-linecap="round" fill="none"/>
+
+  <!-- 身体与头 -->
+  <ellipse cx="128" cy="146" rx="16" ry="36" fill="#ffffff"/>
+  <circle cx="128" cy="100" r="15" fill="#ffffff"/>
+
+  <!-- 口器 -->
+  <rect x="125" y="112" width="6" height="26" rx="3" fill="#ffffff"/>
+
+  <!-- 监测目标（下方波形，表示密度监测） -->
+  <path d="M64 208 L92 208 L104 188 L118 226 L132 196 L144 208 L192 208"
+        stroke="#ffffff" stroke-opacity="0.9" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
