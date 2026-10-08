@@ -353,6 +353,50 @@ def _compute_first_monitor(source_df):
     return out
 
 
+def _compute_point_dates(source_df, target_date):
+    """D74：按 (地市-区/县/市-街道/乡/镇, 社区/村居) 收集该点在输入日期及之前的监测日期（升序去重）。
+
+    仅统计“监测指标值不为空”的记录（与 `_compute_first_monitor` 口径一致）。
+    返回 {(loc, comm): [date, ...]}。
+    """
+    df = source_df[[C.COL_LOC, C.COL_COMMUNITY, C.COL_TIME, C.COL_VALUE]].copy()
+    df[C.COL_TIME] = pd.to_datetime(df[C.COL_TIME], errors='coerce')
+    df[C.COL_VALUE] = pd.to_numeric(df[C.COL_VALUE], errors='coerce')
+    df = df.dropna(subset=[C.COL_TIME, C.COL_VALUE])
+    if df.empty:
+        return {}
+    df = df[df[C.COL_TIME].dt.date <= target_date]
+    df[C.COL_LOC] = df[C.COL_LOC].fillna('').astype(str).str.strip()
+    df[C.COL_COMMUNITY] = df[C.COL_COMMUNITY].fillna('').astype(str).str.strip()
+    out = {}
+    for (l, c), grp in df.groupby([C.COL_LOC, C.COL_COMMUNITY]):
+        out[(l, c)] = sorted(grp[C.COL_TIME].dt.date.unique())
+    return out
+
+
+def _short_cycle_drop(dates, target_date):
+    """D74：乱码记录（首例/末例报告时间均为空白）的追加排除判定。
+
+    该点监测日期序列若为**开头恰好连续 CONSEC_DAYS(5) 天**、之后**断续**监测并一直延续到
+    输入日期，且连续监测首日到输入日期**不足 CYCLE_DAYS(22) 天** → 排除该记录。
+    例（10/8 茂名电白 坡园新坡村）：10/1~10/5 连续 5 天 → 断 10/6、10/7 → 10/8 再测，
+    首日 10/1 距 10/8 仅 7 天 < 22 → 排除。
+
+    注意：开头连续段**超过** 5 天（如 9/29~10/5 连续 7 天）、或连续监测一直连到输入日期
+    而没有中断（如 10/4~10/8 连续 5 天）的，都不属于本情形。
+    """
+    n = C.CONSEC_DAYS
+    if not dates or len(dates) < n + 1:          # 至少“连续 n 天 + 之后再测”
+        return False
+    if dates[-1] != target_date:                 # 必须断续监测到输入日期
+        return False
+    if (dates[n - 1] - dates[0]).days != n - 1:  # 前 n 个监测日恰好连续
+        return False
+    if (dates[n] - dates[0]).days == n:          # 第 n+1 个监测日紧接其后 → 连续段不止 n 天
+        return False
+    return (target_date - dates[0]).days < C.CYCLE_DAYS
+
+
 def _compute_last_case_time(source_df, target_date):
     """D71：按 (地市-区/县/市-街道/乡/镇, 社区/村居) 计算该点“最后的病例报告时间”。
 
@@ -434,6 +478,8 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     first_monitor = _compute_first_monitor(source_df)
     # D71：该点“最后的病例报告时间”映射（乱码记录优先用它判定监测周期）
     last_case_time = _compute_last_case_time(source_df, target_date)
+    # D74：该点监测日期序列映射（判断“开头连续5天 + 后续断续至输入日期”）
+    point_dates = _compute_point_dates(source_df, target_date)
 
     def record(idx_list, reason):
         for i in idx_list:
@@ -483,6 +529,7 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     days = pd.to_numeric(df[C.COL_DAYS], errors='coerce')
     keep_days = days.notna() & (days <= C.DAYS_LOW)
     messy_rows = []          # 乱码记录（末例>40000 且 首例>40000），供 基础数据集 乱码 sheet
+    cycle_drop = pd.Series([False] * len(df), index=df.index)   # D74：被“连续监测未满22天”排除的行
     if C.COL_FIRST_DAYS in df.columns:
         first_days = pd.to_numeric(df[C.COL_FIRST_DAYS], errors='coerce')
         mask_high = days > C.DAYS_HIGH
@@ -505,7 +552,20 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
         interval_ok = pd.Series([False] * len(df), index=df.index)
         has_iv = messy_interval.notna()
         interval_ok[has_iv] = pd.to_numeric(messy_interval[has_iv]) <= C.DAYS_LOW
-        keep_messy = messy_mask & interval_ok
+        # D74：乱码记录（首例/末例报告时间**均为空白**且两列天数均 >40000）追加排除——
+        #   该点监测日期为“开头恰好连续 5 天 → 之后断续监测至输入日期”，且连续监测首日
+        #   到输入日期不足 22 天时，一并排除不计算在内（例：10/8 茂名电白 坡园新坡村）。
+        case_cols = [c for c in (C.COL_FIRST_CASE, C.COL_LAST_CASE) if c in df.columns]
+        if messy_mask.any() and len(case_cols) == 2 and point_dates:
+            case_blank = (pd.to_datetime(df[C.COL_FIRST_CASE], errors='coerce').isna()
+                          & pd.to_datetime(df[C.COL_LAST_CASE], errors='coerce').isna())
+            locs = df.loc[messy_mask, C.COL_LOC].fillna('').astype(str).str.strip()
+            comms = df.loc[messy_mask, C.COL_COMMUNITY].fillna('').astype(str).str.strip()
+            for i, l, c in zip(df.index[messy_mask], locs, comms):
+                if bool(case_blank.at[i]) and _short_cycle_drop(point_dates.get((l, c)), target_date):
+                    cycle_drop.at[i] = True
+            keep_days = keep_days & ~cycle_drop
+        keep_messy = messy_mask & interval_ok & ~cycle_drop
         keep_days = keep_days | keep_messy
         # 捕获乱码记录（含被放弃的，供 乱码 sheet；放弃的记浅红）
         if messy_mask.any():
@@ -517,7 +577,7 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
                     'time': r[C.COL_TIME], 'method': r[C.COL_METHOD], 'value': r[C.COL_VALUE],
                     'first_monitor': messy_ref.at[i],        # D71：最初监测时间（病例报告时间）
                     'interval': messy_interval.at[i],
-                    'dropped': not bool(interval_ok.at[i]),
+                    'dropped': (not bool(interval_ok.at[i])) or bool(cycle_drop.at[i]),
                 })
     # 监测天数（村居一览表 BI≥5/ADI>2 行展示用）：以距末例天数为准；>40000 改用距首例天数；
     # 距首例也 >40000 则用“最初监测日期”到输入日期的间隔天数（D63）
@@ -529,7 +589,10 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
             messy_iv = pd.to_numeric(messy_interval, errors='coerce')
             disp_days = disp_days.where(~messy_mask, messy_iv)
     df['_days'] = pd.to_numeric(disp_days, errors='coerce')
-    record(list(df.index[~keep_days]), '距末例天数不在范围内')
+    # D74 排除的记录单独记原因，避免与普通“距末例天数不在范围内”重复统计
+    if cycle_drop.any():
+        record(list(cycle_drop.index[cycle_drop]), '乱码记录连续监测未满22天')
+    record(list(df.index[~keep_days & ~cycle_drop]), '距末例天数不在范围内')
     df = df[keep_days]
 
     # ---- P7 防控区类型 ----
