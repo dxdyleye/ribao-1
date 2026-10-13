@@ -337,6 +337,30 @@ _BASE_OUT_COLS = ['地市', C.COL_LOC, '区县', C.COL_COMMUNITY, '监测地点'
                   C.COL_ADDR1, C.COL_ADDR2, C.COL_TIME, C.COL_METHOD, C.COL_VALUE]
 
 
+def _point_base_names(df):
+    """D76：监测点名称的基础部分 = `社区/村居`；该列为空时退回该行地址。
+
+    地址取“监测地址（手填）”优先、其次“监测地址（地图定位版）”，并按最小地址区分的
+    同一套清理规则去掉重复的地市/区县/街道/社区/防控区类型子串；仍为空则用 'nan'。
+    目的：避免同一街道下多条“社区/村居 为空”的记录重名（如都叫 nan（核心区）），
+    在整合表按 (地市,区县,街道,监测地点) 外连接 BI/ADI 时两两相乘。
+    """
+    addr_pref = _addr_of_pref(C.COL_ADDR2, C.COL_ADDR1)
+    out = []
+    for _, r in df.iterrows():
+        comm = r.get(C.COL_COMMUNITY)
+        if comm is None or (isinstance(comm, float) and comm != comm):
+            comm = ''
+        comm = str(comm).strip()
+        if comm and comm.lower() != 'nan':
+            out.append(comm)
+            continue
+        a = addr_pref(r)
+        a = _clean_addr(a, r.get(C.COL_LOC), comm, r.get(C.COL_TYPE)).strip() if a else ''
+        out.append(a if a else 'nan')
+    return out
+
+
 def _compute_first_monitor(source_df):
     """按 (地市-区/县/市-街道/乡/镇, 社区/村居, 监测方法) 计算每个监测点的“最初监测日期”：
     从 P1 处理前的数据中，取该点**对应监测方法**且**监测指标值不为空**的记录，
@@ -610,7 +634,12 @@ def run_pipeline(source_df, target_date, exclude=None, flight_df=None):
     df = df[~mask_type]
 
     # ---- P8 监测地点 ----
-    df['监测地点'] = df[C.COL_COMMUNITY].astype(str) + '（' + df[C.COL_TYPE].astype(str) + '）'
+    # D76：社区/村居 为空时，用该行地址（手填优先、其次地图定位版）作为监测点名称；
+    #   否则同一街道下所有“社区为空”的记录会得到同一个监测地点（如 nan（核心区）），
+    #   整合表按 (地市,区县,街道,监测地点) 外连接 BI/ADI 时会两两相乘，
+    #   凭空产生源数据中并不存在的 ADI/BI 组合（10/13 中山市东区街道即为此情形）。
+    df['监测地点'] = ['%s（%s）' % (n, t)
+                    for n, t in zip(_point_base_names(df), df[C.COL_TYPE].astype(str))]
 
     # ---- P9 解析地市/区县/街道 ----
     parsed = df[C.COL_LOC].map(parse_location)
@@ -901,8 +930,8 @@ def process_flight_monitoring(flight_df, target_date):
     df['街道'] = [p[2] for p in parsed]
 
     # P8 监测地点
-    df['监测地点'] = (df[C.COL_COMMUNITY].astype(str)
-                     + '（' + df[C.COL_TYPE].fillna('').astype(str) + '，飞行监测）')
+    df['监测地点'] = ['%s（%s，飞行监测）' % (n, t) for n, t
+                    in zip(_point_base_names(df), df[C.COL_TYPE].fillna('').astype(str))]
 
     def stream(value_col):
         # P3：指标值为空删除；A2：完整键去重保留最大值
