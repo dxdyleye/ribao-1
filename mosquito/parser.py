@@ -69,11 +69,23 @@ def parse_location(s):
     return None
 
 
+# D68/D77：这些区县按原样（或其规范写法）显示，不做“删末尾 市/县/区 字”处理
+_DISTRICT_KEEP_AS_IS = {
+    '城区': '城区',        # 汕尾市城区等（D68）
+    '梅县区': '梅县',      # 梅州市梅县区 → 显示“梅县”（D77）
+    '梅县': '梅县',
+}
+
+
 def district_display_sheet(district):
     """村居一览表显示：市辖区->-（东莞/中山，与参考一致），去掉末尾 市/县/区 字；
-    例外（D68）：区县为“城区”（汕尾市城区等）时保留“城区”，不去掉“区”字。"""
+    例外（D68）：区县为“城区”（汕尾市城区等）时保留“城区”，不去掉“区”字；
+    例外（D77）：梅州市“梅县”（源数据为“梅县区”）保留为“梅县”，不显示为“梅”。"""
     if district == '市辖区':
         return '-'
-    if district == '城区':
-        return '城区'
+    if district in _DISTRICT_KEEP_AS_IS:
+        return _DISTRICT_KEEP_AS_IS[district]
     return district.rstrip('市县区')
+
+
+
