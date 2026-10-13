@@ -169,7 +169,8 @@ def _clean_addr(addr, loc, community, type_):
     district = parsed[1] if parsed else None
     street = parsed[2] if parsed else None
     pats = [p for p in (loc, street, district, community,
-                        city + '市' if city else None, type_, '广东省') if p]
+                        city + '市' if city else None, type_, '广东省')
+            if isinstance(p, str) and p.strip()]   # 仅取非空字符串：源数据这些列可能为空（float NaN）
     for pat in sorted(set(pats), key=len, reverse=True):
         while pat in s:
             s = s.replace(pat, '')
@@ -233,7 +234,15 @@ def apply_address_distinction(frame):
     pref_map = _addr_of_pref(C.COL_ADDR1, C.COL_ADDR2)   # 地图定位版优先（原规则）
     pref_hand = _addr_of_pref(C.COL_ADDR2, C.COL_ADDR1)  # 手填优先
 
-    for key, idx in frame.groupby(group_cols).groups.items():
+    # 分组键为空的记录（社区/村居 或 防控区类型 或 地市串 为空）不参与地址区分：
+    # 它们没有可用的“点”标识，pandas 会把同一街道下这些空值行并成一组，进而按互不相同的
+    # 地址改名（形如 “nan（某地址）（核心区）”），既不合理也曾在清洗地址时抛 TypeError
+    # （10/13 中山市东区街道即为此情形）。这些行保持原监测地点不变。
+    valid = frame[group_cols].notna().all(axis=1)
+    if not valid.any():
+        return frame
+
+    for key, idx in frame[valid].groupby(group_cols).groups.items():
         rows = frame.loc[idx]
         if len(set(a for a in rows.apply(pref_map, axis=1) if a)) < 2 \
                 and len(set(a for a in rows.apply(pref_hand, axis=1) if a)) < 2:
